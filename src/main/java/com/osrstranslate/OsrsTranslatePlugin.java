@@ -34,7 +34,7 @@ public class OsrsTranslatePlugin extends Plugin
         InterfaceID.DIALOG_PLAYER,    // 217 — fala do Player
         InterfaceID.DIALOG_OPTION,    // 219 — opções de diálogo
         InterfaceID.DIALOG_SPRITE,    // 193 — caixas com item/narrativa
-        InterfaceID.DIALOG_MESSAGE,   // 229 — mensagens do sistema
+        229,                          // DIALOG_MESSAGE — mensagens do sistema
     };
 
     @Inject
