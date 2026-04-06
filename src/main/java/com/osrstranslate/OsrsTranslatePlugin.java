@@ -41,6 +41,9 @@ public class OsrsTranslatePlugin extends Plugin
     private Client client;
 
     @Inject
+    private Gson gson;
+
+    @Inject
     private OsrsTranslateConfig config;
 
     private Map<String, String> translations;
@@ -70,7 +73,7 @@ public class OsrsTranslatePlugin extends Plugin
             }
             InputStreamReader reader = new InputStreamReader(is, StandardCharsets.UTF_8);
             Type type = new TypeToken<Map<String, String>>(){}.getType();
-            translations = new Gson().fromJson(reader, type);
+            translations = gson.fromJson(reader, type);
         }
         catch (Exception e)
         {
