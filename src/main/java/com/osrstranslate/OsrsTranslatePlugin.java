@@ -7,7 +7,6 @@ import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
 import net.runelite.api.widgets.Widget;
 import net.runelite.api.widgets.InterfaceID;
-import net.runelite.api.widgets.WidgetUtil;
 import net.runelite.api.events.WidgetLoaded;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
