@@ -1,13 +1,15 @@
 package com.osrstranslate;
 
-import com.google.gson.Gson;
-import com.google.gson.reflect.TypeToken;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.google.inject.Provides;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
 import net.runelite.api.events.WidgetLoaded;
 import net.runelite.api.widgets.InterfaceID;
 import net.runelite.api.widgets.Widget;
+import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.plugins.Plugin;
@@ -16,69 +18,122 @@ import net.runelite.client.plugins.PluginDescriptor;
 import javax.inject.Inject;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Slf4j
 @PluginDescriptor(
     name = "OSRS Translate PT-BR",
     description = "Traduz dialogos do OSRS para Portugues Brasileiro",
-    tags = {"translate", "portuguese", "ptbr", "dialogo", "traducao"}
+    tags = {"translate", "portuguese", "ptbr"}
 )
 public class OsrsTranslatePlugin extends Plugin
 {
-    // IDs das interfaces de dialogo do OSRS
     private static final int[] DIALOG_INTERFACES = {
-        InterfaceID.DIALOG_NPC,       // 231 - fala de NPC
-        InterfaceID.DIALOG_PLAYER,    // 217 - fala do Player
-        InterfaceID.DIALOG_OPTION,    // 219 - opcoes de dialogo
-        InterfaceID.DIALOG_SPRITE,    // 193 - caixas com item/narrativa
-        229,                          // DIALOG_MESSAGE - mensagens do sistema
+        InterfaceID.DIALOG_NPC,
+        InterfaceID.DIALOG_PLAYER,
+        InterfaceID.DIALOG_OPTION,
+        InterfaceID.DIALOG_SPRITE,
     };
 
-    @Inject
-    private Client client;
+    private static final Pattern PLACEHOLDER_PATTERN = Pattern.compile("\\[[^\\]]+\\]");
+    private static final Pattern HANS_PATTERN = Pattern.compile(
+        "^You've spent (\\d[\\d,]*) day(?:s)?, (\\d[\\d,]*) hour(?:s)?, (\\d[\\d,]*) minute(?:s)? in the world since you arrived (\\d[\\d,]*) day(?:s)? ago\\.$"
+    );
+    private static final Pattern NUMBER_PATTERN = Pattern.compile("(\\d[\\d,]*)");
 
-    @Inject
-    private Gson gson;
-
-    @Inject
-    private OsrsTranslateConfig config;
+    @Inject private Client client;
+    @Inject private ClientThread clientThread;
+    @Inject private OsrsTranslateConfig config;
 
     private Map<String, String> translations;
+    private final List<PatternEntry> regexTranslations = new ArrayList<>();
+
+    private static class PatternEntry
+    {
+        final Pattern pattern;
+        final String translation;
+
+        PatternEntry(Pattern pattern, String translation)
+        {
+            this.pattern = pattern;
+            this.translation = translation;
+        }
+    }
 
     @Override
     protected void startUp()
     {
-        loadTranslations();
-        log.info("OSRS Translate PT-BR iniciado - {} traducoes carregadas", translations.size());
+        try (InputStream is = getClass().getResourceAsStream("/com/osrstranslate/translations.json"))
+        {
+            if (is == null)
+            {
+                log.error("translations.json nao encontrado!");
+                return;
+            }
+
+            translations = parseJsonMap(new InputStreamReader(is, StandardCharsets.UTF_8));
+            regexTranslations.clear();
+
+            for (Map.Entry<String, String> entry : translations.entrySet())
+            {
+                if (entry.getKey().contains("["))
+                {
+                    String[] parts = PLACEHOLDER_PATTERN.split(entry.getKey(), -1);
+                    StringBuilder sb = new StringBuilder();
+                    for (int i = 0; i < parts.length; i++)
+                    {
+                        sb.append(Pattern.quote(parts[i]));
+                        if (i < parts.length - 1)
+                        {
+                            sb.append("(.+?)");
+                        }
+                    }
+                    regexTranslations.add(new PatternEntry(Pattern.compile(sb.toString()), entry.getValue()));
+                }
+            }
+
+            log.info("PT-BR iniciado - {} estaticos + {} dinamicos", translations.size(), regexTranslations.size());
+        }
+        catch (Exception e)
+        {
+            log.error("Erro ao carregar traducoes", e);
+        }
+    }
+
+    private Map<String, String> parseJsonMap(InputStreamReader reader)
+    {
+        try
+        {
+            JsonElement element = new JsonParser().parse(reader);
+            JsonObject object = element.getAsJsonObject();
+            Map<String, String> result = new LinkedHashMap<>();
+            for (Map.Entry<String, JsonElement> entry : object.entrySet())
+            {
+                if (!result.containsKey(entry.getKey()))
+                {
+                    result.put(entry.getKey(), entry.getValue().getAsString());
+                }
+            }
+            return result;
+        }
+        catch (Exception e)
+        {
+            log.error("Erro ao parsear translations.json", e);
+            return new LinkedHashMap<>();
+        }
     }
 
     @Override
     protected void shutDown()
     {
         translations = null;
-        log.info("OSRS Translate PT-BR encerrado");
-    }
-
-    private void loadTranslations()
-    {
-        try (InputStream is = getClass().getResourceAsStream("/com/osrstranslate/translations.json"))
-        {
-            if (is == null)
-            {
-                log.error("translations.json nao encontrado nos recursos do plugin");
-                return;
-            }
-            InputStreamReader reader = new InputStreamReader(is, StandardCharsets.UTF_8);
-            Type type = new TypeToken<Map<String, String>>(){}.getType();
-            translations = gson.fromJson(reader, type);
-        }
-        catch (Exception e)
-        {
-            log.error("Erro ao carregar traducoes", e);
-        }
+        regexTranslations.clear();
     }
 
     @Subscribe
@@ -93,7 +148,8 @@ public class OsrsTranslatePlugin extends Plugin
         {
             if (event.getGroupId() == interfaceId)
             {
-                translateInterface(interfaceId);
+                final int id = interfaceId;
+                clientThread.invokeLater(() -> translateInterface(id));
                 return;
             }
         }
@@ -101,12 +157,14 @@ public class OsrsTranslatePlugin extends Plugin
 
     private void translateInterface(int interfaceId)
     {
-        Widget root = client.getWidget(interfaceId, 0);
-        if (root == null)
+        for (int i = 0; i < 20; i++)
         {
-            return;
+            Widget widget = client.getWidget(interfaceId, i);
+            if (widget != null)
+            {
+                translateWidget(widget);
+            }
         }
-        translateWidget(root);
     }
 
     private void translateWidget(Widget widget)
@@ -119,10 +177,47 @@ public class OsrsTranslatePlugin extends Plugin
         String text = widget.getText();
         if (text != null && !text.isEmpty())
         {
-            String translated = translate(text);
-            if (translated != null)
+            String clean = text
+                .replaceAll("(?i)<br\\s*/?>", " ")
+                .replaceAll("<[^>]+>", "")
+                .replaceAll("\\s+", " ")
+                .trim();
+
+            if (clean.startsWith("You've spent")
+                && clean.contains("in the world since you arrived")
+                && clean.endsWith("ago."))
             {
-                widget.setText(translated);
+                String ptHans = translateHans(clean);
+                if (ptHans != null)
+                {
+                    widget.setText(ptHans);
+                    return;
+                }
+            }
+
+            String pt = translations.get(clean);
+            if (pt == null)
+            {
+                for (PatternEntry entry : regexTranslations)
+                {
+                    Matcher matcher = entry.pattern.matcher(clean);
+                    if (matcher.matches())
+                    {
+                        String result = entry.translation;
+                        for (int i = 1; i <= matcher.groupCount(); i++)
+                        {
+                            result = result.replaceFirst("\\[[^\\]]+\\]", Matcher.quoteReplacement(matcher.group(i)));
+                        }
+                        pt = result;
+                        break;
+                    }
+                }
+            }
+
+            if (pt != null)
+            {
+                widget.setText(pt);
+                return;
             }
         }
 
@@ -145,31 +240,48 @@ public class OsrsTranslatePlugin extends Plugin
         }
     }
 
-    private String translate(String text)
+    private String translateHans(String clean)
     {
-        if (translations == null)
+        Matcher matcher = HANS_PATTERN.matcher(clean);
+        if (matcher.matches())
         {
-            return null;
+            String diasNoMundo = matcher.group(1);
+            String horasNoMundo = matcher.group(2);
+            String minutosNoMundo = matcher.group(3);
+            String diasDesdeChegada = matcher.group(4);
+
+            return "Voce passou " + diasNoMundo + " dias, "
+                + horasNoMundo + " horas, " + minutosNoMundo
+                + " minutos no mundo desde que chegou "
+                + diasDesdeChegada + " dias atras.";
         }
 
-        String pt = translations.get(text);
-        if (pt != null)
+        Matcher fallback = NUMBER_PATTERN.matcher(clean);
+        String diasNoMundo = "";
+        String horasNoMundo = "";
+        String minutosNoMundo = "";
+        String diasDesdeChegada = "";
+        if (fallback.find())
         {
-            return pt;
+            diasNoMundo = fallback.group(1);
+        }
+        if (fallback.find())
+        {
+            horasNoMundo = fallback.group(1);
+        }
+        if (fallback.find())
+        {
+            minutosNoMundo = fallback.group(1);
+        }
+        if (fallback.find())
+        {
+            diasDesdeChegada = fallback.group(1);
         }
 
-        String clean = text
-            .replaceAll("(?i)<br\\s*/?>", " ")
-            .replaceAll("<[^>]+>", "")
-            .replaceAll("\\s+", " ")
-            .trim();
-        pt = translations.get(clean);
-        if (pt != null)
-        {
-            return pt;
-        }
-
-        return null;
+        return "Voce passou " + diasNoMundo + " dias, "
+            + horasNoMundo + " horas, " + minutosNoMundo
+            + " minutos no mundo desde que chegou "
+            + diasDesdeChegada + " dias atras.";
     }
 
     @Provides

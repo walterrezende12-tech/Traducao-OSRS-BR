@@ -2,6 +2,8 @@
 
 RuneLite plugin that translates Old School RuneScape NPC dialogs to Brazilian Portuguese in real time.
 
+Author: Walter Rezende
+
 ## Installation
 
 1. Clone this repository
@@ -20,4 +22,4 @@ The plugin translates NPC dialogs, dialog options, and supported in-game message
 
 ## License
 
-MIT
+BSD 2-Clause
