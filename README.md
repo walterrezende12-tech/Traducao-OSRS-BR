@@ -1,21 +1,23 @@
 # OSRS Translate PT-BR
 
-Plugin RuneLite que traduz diálogos de NPCs do Old School RuneScape em tempo real do inglês para português brasileiro.
+RuneLite plugin that translates Old School RuneScape NPC dialogs to Brazilian Portuguese in real time.
 
-## Instalação
+## Installation
 
-1. Clone este repositório ou baixe o release
-2. Build: `./gradlew build`
-3. Instale no RuneLite Developer Tools
+1. Clone this repository
+2. Build with `./gradlew build`
+3. Load the plugin with RuneLite Developer Tools
 
-## Uso
+## Usage
 
-O plugin traduz automaticamente diálogos de NPCs, opções de missões e mensagens do jogo.
+The plugin translates NPC dialogs, dialog options, and supported in-game messages automatically.
 
-## Traduções
+## Notes
 
-Total: 12.764 traduções
+- This repository is the currently published source used by the Plugin Hub entry.
+- Metadata is kept ASCII-only to avoid mojibake in Plugin Hub surfaces.
+- Translation data is embedded from `src/main/resources/com/osrstranslate/translations.json`.
 
-## Licença
+## License
 
 MIT

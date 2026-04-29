@@ -9,8 +9,8 @@ public interface OsrsTranslateConfig extends Config
 {
     @ConfigItem(
         keyName = "enabled",
-        name = "Tradução ativa",
-        description = "Ativa ou desativa a tradução dos diálogos"
+        name = "Traducao ativa",
+        description = "Ativa ou desativa a traducao dos dialogos"
     )
     default boolean enabled()
     {

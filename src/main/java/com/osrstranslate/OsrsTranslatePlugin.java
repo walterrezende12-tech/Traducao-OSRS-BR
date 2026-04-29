@@ -5,9 +5,9 @@ import com.google.gson.reflect.TypeToken;
 import com.google.inject.Provides;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
-import net.runelite.api.widgets.Widget;
-import net.runelite.api.widgets.InterfaceID;
 import net.runelite.api.events.WidgetLoaded;
+import net.runelite.api.widgets.InterfaceID;
+import net.runelite.api.widgets.Widget;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.plugins.Plugin;
@@ -22,19 +22,19 @@ import java.util.Map;
 
 @Slf4j
 @PluginDescriptor(
-    name = "Tradução OSRS BR",
-    description = "Traduz diálogos do OSRS para Português Brasileiro",
+    name = "OSRS Translate PT-BR",
+    description = "Traduz dialogos do OSRS para Portugues Brasileiro",
     tags = {"translate", "portuguese", "ptbr", "dialogo", "traducao"}
 )
 public class OsrsTranslatePlugin extends Plugin
 {
-    // IDs das interfaces de diálogo do OSRS
+    // IDs das interfaces de dialogo do OSRS
     private static final int[] DIALOG_INTERFACES = {
-        InterfaceID.DIALOG_NPC,       // 231 — fala de NPC
-        InterfaceID.DIALOG_PLAYER,    // 217 — fala do Player
-        InterfaceID.DIALOG_OPTION,    // 219 — opções de diálogo
-        InterfaceID.DIALOG_SPRITE,    // 193 — caixas com item/narrativa
-        229,                          // DIALOG_MESSAGE — mensagens do sistema
+        InterfaceID.DIALOG_NPC,       // 231 - fala de NPC
+        InterfaceID.DIALOG_PLAYER,    // 217 - fala do Player
+        InterfaceID.DIALOG_OPTION,    // 219 - opcoes de dialogo
+        InterfaceID.DIALOG_SPRITE,    // 193 - caixas com item/narrativa
+        229,                          // DIALOG_MESSAGE - mensagens do sistema
     };
 
     @Inject
@@ -52,14 +52,14 @@ public class OsrsTranslatePlugin extends Plugin
     protected void startUp()
     {
         loadTranslations();
-        log.info("Tradução OSRS BR iniciado — {} traduções carregadas", translations.size());
+        log.info("OSRS Translate PT-BR iniciado - {} traducoes carregadas", translations.size());
     }
 
     @Override
     protected void shutDown()
     {
         translations = null;
-        log.info("Tradução OSRS BR encerrado");
+        log.info("OSRS Translate PT-BR encerrado");
     }
 
     private void loadTranslations()
@@ -68,7 +68,7 @@ public class OsrsTranslatePlugin extends Plugin
         {
             if (is == null)
             {
-                log.error("translations.json não encontrado nos recursos do plugin");
+                log.error("translations.json nao encontrado nos recursos do plugin");
                 return;
             }
             InputStreamReader reader = new InputStreamReader(is, StandardCharsets.UTF_8);
@@ -77,14 +77,17 @@ public class OsrsTranslatePlugin extends Plugin
         }
         catch (Exception e)
         {
-            log.error("Erro ao carregar traduções", e);
+            log.error("Erro ao carregar traducoes", e);
         }
     }
 
     @Subscribe
     public void onWidgetLoaded(WidgetLoaded event)
     {
-        if (translations == null || !config.enabled()) return;
+        if (translations == null || !config.enabled())
+        {
+            return;
+        }
 
         for (int interfaceId : DIALOG_INTERFACES)
         {
@@ -99,15 +102,20 @@ public class OsrsTranslatePlugin extends Plugin
     private void translateInterface(int interfaceId)
     {
         Widget root = client.getWidget(interfaceId, 0);
-        if (root == null) return;
+        if (root == null)
+        {
+            return;
+        }
         translateWidget(root);
     }
 
     private void translateWidget(Widget widget)
     {
-        if (widget == null) return;
+        if (widget == null)
+        {
+            return;
+        }
 
-        // Traduz texto do widget atual
         String text = widget.getText();
         if (text != null && !text.isEmpty())
         {
@@ -118,7 +126,6 @@ public class OsrsTranslatePlugin extends Plugin
             }
         }
 
-        // Traduz widgets filhos recursivamente
         Widget[] children = widget.getChildren();
         if (children != null)
         {
@@ -128,7 +135,6 @@ public class OsrsTranslatePlugin extends Plugin
             }
         }
 
-        // Traduz widgets dinâmicos
         Widget[] dynamicChildren = widget.getDynamicChildren();
         if (dynamicChildren != null)
         {
@@ -141,20 +147,27 @@ public class OsrsTranslatePlugin extends Plugin
 
     private String translate(String text)
     {
-        if (translations == null) return null;
+        if (translations == null)
+        {
+            return null;
+        }
 
-        // Tentativa 1: match exato
         String pt = translations.get(text);
-        if (pt != null) return pt;
+        if (pt != null)
+        {
+            return pt;
+        }
 
-        // Tentativa 2: substitui <br> por espaço antes de remover demais tags HTML
         String clean = text
             .replaceAll("(?i)<br\\s*/?>", " ")
             .replaceAll("<[^>]+>", "")
             .replaceAll("\\s+", " ")
             .trim();
         pt = translations.get(clean);
-        if (pt != null) return pt;
+        if (pt != null)
+        {
+            return pt;
+        }
 
         return null;
     }
