@@ -149,7 +149,7 @@ public class OsrsTranslatePlugin extends Plugin
             if (event.getGroupId() == interfaceId)
             {
                 final int id = interfaceId;
-                clientThread.invokeLater(() -> translateInterface(id));
+                QuestHelperCompat.scheduleDialogTranslation(clientThread, id, () -> translateInterface(id));
                 return;
             }
         }
@@ -183,24 +183,27 @@ public class OsrsTranslatePlugin extends Plugin
                 .replaceAll("\\s+", " ")
                 .trim();
 
-            if (clean.startsWith("You've spent")
-                && clean.contains("in the world since you arrived")
-                && clean.endsWith("ago."))
+            String qhPrefix = QuestHelperCompat.extractNumberingPrefix(clean);
+            String lookup = qhPrefix.isEmpty() ? clean : QuestHelperCompat.stripNumberingPrefix(clean);
+
+            if (lookup.startsWith("You've spent")
+                && lookup.contains("in the world since you arrived")
+                && lookup.endsWith("ago."))
             {
-                String ptHans = translateHans(clean);
+                String ptHans = translateHans(lookup);
                 if (ptHans != null)
                 {
-                    widget.setText(ptHans);
+                    widget.setText(qhPrefix + ptHans);
                     return;
                 }
             }
 
-            String pt = translations.get(clean);
+            String pt = translations.get(lookup);
             if (pt == null)
             {
                 for (PatternEntry entry : regexTranslations)
                 {
-                    Matcher matcher = entry.pattern.matcher(clean);
+                    Matcher matcher = entry.pattern.matcher(lookup);
                     if (matcher.matches())
                     {
                         String result = entry.translation;
@@ -216,7 +219,7 @@ public class OsrsTranslatePlugin extends Plugin
 
             if (pt != null)
             {
-                widget.setText(pt);
+                widget.setText(qhPrefix + pt);
                 return;
             }
         }
