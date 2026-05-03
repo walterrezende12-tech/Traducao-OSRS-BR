@@ -3,7 +3,7 @@
 RuneLite plugin that translates Old School RuneScape NPC dialogs to Brazilian Portuguese in real time.
 
 Author: Walter Rezende
-
+Discord: https://discord.gg/dJNNTgs5Q
 ## Update summary
 
 This update publishes the validated Plugin Hub source for `traducao-osrs-br`.
