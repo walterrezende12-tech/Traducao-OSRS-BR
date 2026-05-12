@@ -1,16 +1,25 @@
-# Gradle
-.gradle/
-.gradle-user-home/
+# Build
 build/
+.gradle/
+*.class
+*.jar
 
 # IDE
 .idea/
 *.iml
 .vscode/
 
-# OS
-.DS_Store
-Thumbs.db
+# Dados coletados (grandes, mudam frequentemente)
+osrs_corpus_collected.json
 
 # Logs
 *.log
+session.txt
+
+# Temporarios locais
+.tmp.driveupload/
+
+# Exportacoes geradas
+data/exports/cache/
+data/exports/plugin/chat_message_types_from_runelite_logs.csv
+data/exports/plugin/didyouknow_from_runelite_logs.json
