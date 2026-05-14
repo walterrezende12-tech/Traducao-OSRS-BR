@@ -1,47 +1,44 @@
 # OSRS Translate PT-BR
 
-RuneLite plugin that translates Old School RuneScape NPC dialogs to Brazilian Portuguese in real time.
+Plugin RuneLite que traduz o Old School RuneScape para Português Brasileiro em tempo real, sem API externa.
 
 Author: Walter Rezende
 
-Discord: https://discord.gg/dJNNTgs5Q
-## Update summary
+- [Plugin Hub](https://runelite.net/plugin-hub/Walter%20Rezende)
+- [Discord](https://discord.gg/dJNNTgs5Q)
+- [Reportar problema](https://github.com/walterrezende12-tech/Traducao-OSRS-BR/issues)
 
-This update publishes the validated Plugin Hub source for `traducao-osrs-br`.
 
-- Fixes Plugin Hub metadata encoding by keeping public metadata ASCII-safe.
-- Fixes runtime translation loading with duplicate-key tolerant JSON parsing.
-- Fixes Hans play-time dialog handling.
-- Publishes the full translation dataset used during local RuneLite testing.
-- Uses the standard Plugin Hub build path with `build=standard`.
+## Funcionalidades
 
-## Translation data
+- Tradução de diálogos de NPCs, opções de resposta e falas sobre a cabeça.
+- Tradução de menus (botão direito), mensagens do chat do servidor, Skill Guide, Quest Journal e de itens/livros/scrolls;
+- São mais de 120mil traduções embutidas no plugin, quando você instala tudo funciona perfeitamente sem downloads externos;
+- Compatível com o plugin **Quest Helper** e **Contextual Cursor**;
+- Cada domínio do jogo usa um dicionário separado para evitar colisões de tradução.
 
-The plugin embeds its dictionary at `src/main/resources/com/osrstranslate/translations.json`.
 
-- Loaded translations: 116,857 unique entries
-- Static translations: 112,814 entries
-- Dynamic placeholder translations: 4,043 entries
+## Dicionários
 
-## Installation
+| Arquivo | Contexto |
+| :-- | :-- |
+| `translations.json` | Diálogos gerais, level up, mensagens de interface |
+| `translations_skills.json` | Skill Guide |
+| `translations_quests.json` | Quest Journal |
+| `translations_items.json` | Preview de itens, livros e notas |
+| `translations_menu.json` | Opções de menu (botão direito) |
+| `translations_overhead.json` | Falas acima da cabeça de NPCs |
+| `translations_game_message.json` | Mensagens do chat do servidor |
 
-1. Clone this repository.
-2. Build with `./gradlew build`.
-3. Load the plugin with RuneLite Developer Tools.
+## Instalação
 
-## Usage
+Abra o RuneLite → **Plugin Hub** → pesquise `OSRS Translate PT-BR` → **Install**.
 
-The plugin translates NPC dialogs, dialog options, and supported in-game messages automatically.
+## Configuração
 
-## Resumo em portugues
+Todas as opções estão habilitadas por padrão. É possível ativar ou desativar cada domínio independentemente nas configurações do plugin:
 
-Esta atualizacao corrige o plugin publicado no Plugin Hub e envia a base completa de traducoes validada localmente no RuneLite.
-
-- Corrige nomes e descricoes quebrados por problema de encoding.
-- Corrige o carregamento das traducoes em tempo de execucao.
-- Corrige o dialogo especial do Hans.
-- Publica 116.857 traducoes unicas carregadas pelo plugin.
-- Mantem o build no padrao `build=standard` do Plugin Hub.
+`enableDialogues` · `enableSkillGuide` · `enableQuestJournal` · `enableItems` · `enableMenuEntries` · `enableOverhead` · `enableGameMessages`
 
 ## License
 
