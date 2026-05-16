@@ -2,7 +2,7 @@
 
 Plugin RuneLite que traduz o Old School RuneScape para Português Brasileiro em tempo real, sem API externa.
 
-Author: Walter Rezende
+Autor: Walter Rezende
 
 - [Plugin Hub](https://runelite.net/plugin-hub/Walter%20Rezende)
 - [Discord](https://discord.gg/dJNNTgs5Q)
