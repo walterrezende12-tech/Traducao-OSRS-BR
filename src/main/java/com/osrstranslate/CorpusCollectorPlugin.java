@@ -43,6 +43,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -86,6 +87,7 @@ public class CorpusCollectorPlugin extends Plugin
 
     private String currentNpcName = null;
     private String lastResolvedNpcName = null;
+    private String lastOpenedReadableItemName = null;
     private int conversationLevel = 0;
     private String lastOptionChosen = null;
     private boolean skillGuideCaptured = false;
@@ -325,6 +327,8 @@ public class CorpusCollectorPlugin extends Plugin
     @Subscribe
     public void onMenuOptionClicked(MenuOptionClicked event)
     {
+        captureReadableItemContext(event);
+
         if (isTalkToOption(event.getMenuOption()))
         {
             int npcIndex = event.getId();
@@ -396,6 +400,7 @@ public class CorpusCollectorPlugin extends Plugin
             skillGuideCaptured = false;
             currentNpcName = null;
             lastResolvedNpcName = null;
+            lastOpenedReadableItemName = null;
             lastOptionChosen = null;
             conversationLevel = 0;
         }
@@ -417,7 +422,7 @@ public class CorpusCollectorPlugin extends Plugin
         if (npcName == null || npcName.isEmpty()) return;
 
         if (addCollectedText(text, "InGame:" + npcName, "npc", Collections.singletonList(npcName),
-            npcName, "overhead", "Overhead speech", 0, null))
+            npcName, "overhead", "Overhead speech", 0, null, Collections.emptyMap()))
         {
             log.info("[CorpusCollector] Overhead coletado [{}]: {}",
                 npcName, text.substring(0, Math.min(60, text.length())));
@@ -436,7 +441,7 @@ public class CorpusCollectorPlugin extends Plugin
 
         ChatCaptureSpec spec = specForChatMessage(event.getType());
         if (addCollectedText(text, spec.source, spec.type, Collections.singletonList(spec.npcName),
-            spec.speaker, spec.kind, spec.section, 0, null))
+            spec.speaker, spec.kind, spec.section, 0, null, Collections.emptyMap()))
         {
             log.info("[CorpusCollector] Chat coletado [{}]: {}",
                 event.getType(), text.substring(0, Math.min(60, text.length())));
@@ -469,12 +474,17 @@ public class CorpusCollectorPlugin extends Plugin
             return;
         }
 
+        BookMetadata bookMetadata = interfaceId == BOOKS_NOTES
+            ? extractBookMetadata(texts, resolveBookItemName(interfaceId))
+            : BookMetadata.empty();
+
         String npcName = resolveNpcName(interfaceId, texts);
 
         for (CollectedText text : texts)
         {
             if (text.clean.equals(npcName)) continue;
             if (playerName != null && text.clean.equals(playerName)) continue;
+            if (interfaceId == BOOKS_NOTES && bookMetadata.shouldSkip(text.clean)) continue;
 
             List<String> npcs = spec.includeNpcName && npcName != null && !npcName.isEmpty()
                 ? Collections.singletonList(npcName)
@@ -488,7 +498,8 @@ public class CorpusCollectorPlugin extends Plugin
 
             if (addCollectedText(text.marked, source, spec.type, npcs, speaker, spec.kind, spec.section,
                 spec.useConversationLevel ? conversationLevel : 0,
-                spec.capturePrecedingOption ? lastOptionChosen : null))
+                spec.capturePrecedingOption ? lastOptionChosen : null,
+                interfaceId == BOOKS_NOTES ? bookMetadata.toContextMap() : Collections.emptyMap()))
             {
                 log.debug("[CorpusCollector] Coletado [{}]: {}",
                     npcName, text.clean.substring(0, Math.min(60, text.clean.length())));
@@ -793,7 +804,8 @@ public class CorpusCollectorPlugin extends Plugin
         String kind,
         String section,
         int level,
-        String precedingOption)
+        String precedingOption,
+        Map<String, String> extraContext)
     {
         String text = normalizeLookupText(cleanText(originalText));
         if (text.isEmpty()) return false;
@@ -857,6 +869,17 @@ public class CorpusCollectorPlugin extends Plugin
         else
         {
             ctx.add("preceding_option", JsonNull.INSTANCE);
+        }
+
+        if (extraContext != null)
+        {
+            for (Map.Entry<String, String> entry : extraContext.entrySet())
+            {
+                if (entry.getValue() != null && !entry.getValue().isEmpty())
+                {
+                    ctx.addProperty(entry.getKey(), entry.getValue());
+                }
+            }
         }
 
         obj.add("context", ctx);
@@ -976,7 +999,7 @@ public class CorpusCollectorPlugin extends Plugin
         for (CollectedText text : texts)
         {
             if (addCollectedText(text.marked, "InGame:SkillGuide", "skill_guide", Collections.singletonList("SkillGuide"),
-                "System", "skill_description", "Skill Guide", 0, null))
+                "System", "skill_description", "Skill Guide", 0, null, Collections.emptyMap()))
             {
                 log.info("[CorpusCollector] Skill Guide coletado (groupId={}): {}", visibleSkillGuideInterface, text.clean);
             }
@@ -1036,6 +1059,217 @@ public class CorpusCollectorPlugin extends Plugin
             if (root != null && !root.isHidden()) return interfaceId;
         }
         return null;
+    }
+
+    private BookMetadata extractBookMetadata(List<CollectedText> texts, String itemName)
+    {
+        String title = null;
+        String pageLabel = null;
+        String pageNumber = null;
+        String sectionName = null;
+        boolean afterChapters = false;
+
+        for (CollectedText text : texts)
+        {
+            String clean = text.clean;
+            if (clean.isEmpty()) continue;
+
+            if (title == null && looksLikeBookTitle(clean))
+            {
+                title = clean;
+                continue;
+            }
+
+            if (pageLabel == null && looksLikeBookPageLabel(clean))
+            {
+                pageLabel = clean;
+                continue;
+            }
+
+            if (pageNumber == null && clean.matches("^\\d+$"))
+            {
+                pageNumber = clean;
+                continue;
+            }
+
+            if ("Chapters".equalsIgnoreCase(clean) || "Capítulos".equalsIgnoreCase(clean))
+            {
+                afterChapters = true;
+                continue;
+            }
+
+            if (sectionName == null && afterChapters && looksLikeBookHeading(clean))
+            {
+                sectionName = clean;
+                break;
+            }
+        }
+
+        return new BookMetadata(itemName, title, sectionName, pageLabel, pageNumber);
+    }
+
+    private String resolveBookItemName(int interfaceId)
+    {
+        for (int i = 0; i < 100; i++)
+        {
+            Widget widget = client.getWidget(interfaceId, i);
+            String itemName = resolveBookItemName(widget);
+            if (itemName != null && !itemName.isEmpty())
+            {
+                return itemName;
+            }
+        }
+
+        return lastOpenedReadableItemName;
+    }
+
+    private void captureReadableItemContext(MenuOptionClicked event)
+    {
+        int itemId = event.getItemId();
+        if (itemId <= 0)
+        {
+            return;
+        }
+
+        String itemName;
+        try
+        {
+            itemName = normalizeLookupText(cleanText(client.getItemDefinition(itemId).getName()));
+        }
+        catch (Exception e)
+        {
+            log.debug("[CorpusCollector] Nao foi possivel resolver item clicado: itemId={}", itemId, e);
+            return;
+        }
+
+        if (itemName.isEmpty())
+        {
+            return;
+        }
+
+        String option = normalizeLookupText(cleanText(event.getMenuOption()));
+        log.debug("[CorpusCollector] Item clicado: option='{}' item='{}' itemId={} target='{}'",
+            option, itemName, itemId, normalizeLookupText(cleanText(event.getMenuTarget())));
+
+        if (isReadableItemOption(option))
+        {
+            lastOpenedReadableItemName = itemName;
+            log.debug("[CorpusCollector] Contexto de leitura atualizado: {}", lastOpenedReadableItemName);
+        }
+    }
+
+    private boolean isReadableItemOption(String option)
+    {
+        if (option == null || option.isEmpty())
+        {
+            return false;
+        }
+
+        String lower = option.toLowerCase(Locale.ROOT);
+        return lower.equals("read")
+            || lower.equals("ler")
+            || lower.equals("open")
+            || lower.equals("abrir")
+            || lower.equals("study")
+            || lower.equals("estudar")
+            || lower.equals("inspect")
+            || lower.equals("inspecionar")
+            || lower.equals("check")
+            || lower.equals("verificar")
+            || lower.equals("use");
+    }
+
+    private String resolveBookItemName(Widget widget)
+    {
+        if (widget == null)
+        {
+            return null;
+        }
+
+        int itemId = widget.getItemId();
+        if (itemId > 0)
+        {
+            try
+            {
+                return normalizeLookupText(cleanText(client.getItemDefinition(itemId).getName()));
+            }
+            catch (Exception e)
+            {
+                log.debug("[CorpusCollector] Nao foi possivel resolver nome do item do livro para itemId={}", itemId, e);
+            }
+        }
+
+        Widget[] children = widget.getChildren();
+        if (children != null)
+        {
+            for (Widget child : children)
+            {
+                String itemName = resolveBookItemName(child);
+                if (itemName != null && !itemName.isEmpty())
+                {
+                    return itemName;
+                }
+            }
+        }
+
+        Widget[] dynamicChildren = widget.getDynamicChildren();
+        if (dynamicChildren != null)
+        {
+            for (Widget child : dynamicChildren)
+            {
+                String itemName = resolveBookItemName(child);
+                if (itemName != null && !itemName.isEmpty())
+                {
+                    return itemName;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private boolean looksLikeBookTitle(String text)
+    {
+        return looksLikeBookHeading(text)
+            && !looksLikeBookPageLabel(text)
+            && !"Chapters".equalsIgnoreCase(text)
+            && !"Capítulos".equalsIgnoreCase(text);
+    }
+
+    private boolean looksLikeBookPageLabel(String text)
+    {
+        return text.toLowerCase(Locale.ROOT).contains("page");
+    }
+
+    private boolean looksLikeBookHeading(String text)
+    {
+        if (text == null || text.isEmpty() || text.length() > 48)
+        {
+            return false;
+        }
+
+        if (!containsLetters(text) || text.endsWith(".") || text.endsWith(",") || text.endsWith("!") || text.endsWith("?"))
+        {
+            return false;
+        }
+
+        String[] words = text.split("\\s+");
+        if (words.length == 0 || words.length > 4)
+        {
+            return false;
+        }
+
+        for (String word : words)
+        {
+            if (word.isEmpty()) continue;
+            char first = word.charAt(0);
+            if (!Character.isUpperCase(first) && !Character.isDigit(first))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private boolean shouldCollectChatMessage(ChatMessageType type)
@@ -1213,6 +1447,65 @@ public class CorpusCollectorPlugin extends Plugin
             this.speaker = speaker;
             this.kind = kind;
             this.section = section;
+        }
+    }
+
+    private static class BookMetadata
+    {
+        private final String itemName;
+        private final String title;
+        private final String sectionName;
+        private final String pageLabel;
+        private final String pageNumber;
+
+        private BookMetadata(String itemName, String title, String sectionName, String pageLabel, String pageNumber)
+        {
+            this.itemName = itemName;
+            this.title = title;
+            this.sectionName = sectionName;
+            this.pageLabel = pageLabel;
+            this.pageNumber = pageNumber;
+        }
+
+        private static BookMetadata empty()
+        {
+            return new BookMetadata(null, null, null, null, null);
+        }
+
+        private boolean shouldSkip(String text)
+        {
+            return text.equals(title)
+                || text.equals(sectionName)
+                || text.equals(pageLabel)
+                || text.equals(pageNumber)
+                || "Chapters".equalsIgnoreCase(text)
+                || "Capítulos".equalsIgnoreCase(text);
+        }
+
+        private Map<String, String> toContextMap()
+        {
+            Map<String, String> map = new LinkedHashMap<>();
+            if (itemName != null && !itemName.isEmpty())
+            {
+                map.put("book_item_name", itemName);
+            }
+            if (title != null && !title.isEmpty())
+            {
+                map.put("book_title", title);
+            }
+            if (sectionName != null && !sectionName.isEmpty())
+            {
+                map.put("book_section", sectionName);
+            }
+            if (pageLabel != null && !pageLabel.isEmpty())
+            {
+                map.put("book_page_label", pageLabel);
+            }
+            if (pageNumber != null && !pageNumber.isEmpty())
+            {
+                map.put("book_page_number", pageNumber);
+            }
+            return map;
         }
     }
 
