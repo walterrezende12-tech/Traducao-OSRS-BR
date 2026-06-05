@@ -96,6 +96,12 @@ public class OsrsTranslatePlugin extends Plugin {
     private static final Pattern BR_TAG = Pattern.compile("(?i)<br\\s*/?>");
     private static final Pattern PLACEHOLDER = Pattern.compile("\\[[^\\]]+\\]");
     private static final Pattern START_TAGS = Pattern.compile("^(<str>|<col=[^>]+>)+");
+    private static final Pattern WELCOME_LAST_LOGIN_PATTERN =
+        Pattern.compile("^You last logged in (.+) ago\\.$");
+    private static final Pattern ENGLISH_DURATION_UNIT_PATTERN =
+        Pattern.compile("\\b(\\d[\\d,]*)\\s+(day|days|hour|hours|minute|minutes|second|seconds)\\b");
+    private static final Pattern ENGLISH_SINGLE_DURATION_UNIT_PATTERN =
+        Pattern.compile("\\b(a|an)\\s+(day|hour|minute|second)\\b");
     private static final Pattern HANS_PATTERN = Pattern.compile(
         "^You've spent (\\d[\\d,]*) day(?:s)?, (\\d[\\d,]*) hour(?:s)?, "
             + "(\\d[\\d,]*) minute(?:s)? in the world since you arrived "
@@ -730,6 +736,11 @@ public class OsrsTranslatePlugin extends Plugin {
             return preserveStartTags(originalText) + numberingPrefix + translateHans(lookup);
         }
 
+        String welcomeTranslation = translateWelcomeDynamicText(lookup, interfaceId);
+        if (welcomeTranslation != null) {
+            return preserveStartTags(originalText) + numberingPrefix + welcomeTranslation;
+        }
+
         TranslationDomain domain = domainForInterface(interfaceId);
         if (domain.values.contains(lookup)) {
             return null;
@@ -920,6 +931,8 @@ public class OsrsTranslatePlugin extends Plugin {
             case DIDYOUKNOW:
             case LOGINLOGOUTNOTIFICATION:
             case ITEM_EXAMINE:
+            case NPC_EXAMINE:
+            case OBJECT_EXAMINE:
                 return true;
             default:
                 return false;
@@ -971,6 +984,19 @@ public class OsrsTranslatePlugin extends Plugin {
             && lookup.endsWith("ago.");
     }
 
+    private String translateWelcomeDynamicText(String lookup, int interfaceId) {
+        if (interfaceId != WELCOME_SCREEN && !loginInterfaceGroups.contains(interfaceId)) {
+            return null;
+        }
+
+        Matcher matcher = WELCOME_LAST_LOGIN_PATTERN.matcher(lookup);
+        if (!matcher.matches()) {
+            return null;
+        }
+
+        return "Sua última sessão foi há " + translateEnglishDuration(matcher.group(1)) + ".";
+    }
+
     private String preserveStartTags(String text) {
         Matcher matcher = START_TAGS.matcher(text);
         return matcher.find() ? matcher.group() : "";
@@ -999,6 +1025,70 @@ public class OsrsTranslatePlugin extends Plugin {
 
     private String findNext(Matcher matcher) {
         return matcher.find() ? matcher.group(1) : "";
+    }
+
+    private String translateEnglishDuration(String text) {
+        Matcher matcher = ENGLISH_DURATION_UNIT_PATTERN.matcher(text);
+        StringBuffer translated = new StringBuffer();
+        boolean found = false;
+
+        while (matcher.find()) {
+            found = true;
+            String amount = matcher.group(1);
+            String unit = matcher.group(2);
+            matcher.appendReplacement(
+                translated,
+                Matcher.quoteReplacement(amount + " " + translateDurationUnit(unit))
+            );
+        }
+
+        if (!found) {
+            Matcher singleMatcher = ENGLISH_SINGLE_DURATION_UNIT_PATTERN.matcher(text);
+            StringBuffer singleTranslated = new StringBuffer();
+            boolean singleFound = false;
+
+            while (singleMatcher.find()) {
+                singleFound = true;
+                String unit = singleMatcher.group(2);
+                singleMatcher.appendReplacement(
+                    singleTranslated,
+                    Matcher.quoteReplacement("1 " + translateDurationUnit(unit))
+                );
+            }
+
+            if (!singleFound) {
+                return text;
+            }
+
+            singleMatcher.appendTail(singleTranslated);
+            return singleTranslated.toString();
+        }
+
+        matcher.appendTail(translated);
+        return translated.toString();
+    }
+
+    private String translateDurationUnit(String unit) {
+        switch (unit) {
+            case "day":
+                return "dia";
+            case "days":
+                return "dias";
+            case "hour":
+                return "hora";
+            case "hours":
+                return "horas";
+            case "minute":
+                return "minuto";
+            case "minutes":
+                return "minutos";
+            case "second":
+                return "segundo";
+            case "seconds":
+                return "segundos";
+            default:
+                return unit;
+        }
     }
 
     private String textToId(String text) {
