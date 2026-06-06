@@ -90,4 +90,15 @@ public interface OsrsTranslateConfig extends Config {
     default boolean enableGameMessages() {
         return true;
     }
+
+    @ConfigItem(
+        keyName = "enableWelcome",
+        name = "Traduzir boas-vindas",
+        description = "Traduz a tela e mensagens de boas-vindas/login",
+        section = staticTranslations,
+        position = 7
+    )
+    default boolean enableWelcome() {
+        return true;
+    }
 }
