@@ -23,11 +23,8 @@ import net.runelite.api.widgets.Widget;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
-import net.runelite.client.game.SpriteManager;
-import net.runelite.client.plugins.PluginManager;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
-import net.runelite.client.ui.overlay.OverlayManager;
 
 import javax.inject.Inject;
 import java.io.File;
@@ -112,11 +109,6 @@ public class OsrsTranslatePlugin extends Plugin {
     @Inject private Client client;
     @Inject private ClientThread clientThread;
     @Inject private OsrsTranslateConfig config;
-    @Inject private OverlayManager overlayManager;
-    @Inject private PluginManager pluginManager;
-    @Inject private SpriteManager spriteManager;
-    @Inject private ContextualCursorOverlay contextualCursorOverlay;
-
     private final ExaminePluginBridge examinePluginBridge = new ExaminePluginBridge();
     private volatile Map<String, String> translations = Collections.emptyMap();
     private volatile Map<String, String> translationsSkills = Collections.emptyMap();
@@ -189,7 +181,6 @@ public class OsrsTranslatePlugin extends Plugin {
         configureHotReloadFiles();
         loadTranslations();
         startHotReloadWatcher();
-        overlayManager.add(contextualCursorOverlay);
     }
 
     @Override
@@ -222,7 +213,6 @@ public class OsrsTranslatePlugin extends Plugin {
         loginInspectionDeadline = 0L;
         inspectedLoginGroups.clear();
         loginInterfaceGroups.clear();
-        overlayManager.remove(contextualCursorOverlay);
     }
 
     private void loadTranslations() {
@@ -852,20 +842,8 @@ public class OsrsTranslatePlugin extends Plugin {
         }
     }
 
-    boolean isContextualCursorCompatEnabled() {
-        return config.enableMenuEntries();
-    }
-
     boolean isMenuTranslationEnabled() {
         return config.enableMenuEntries();
-    }
-
-    PluginManager getPluginManager() {
-        return pluginManager;
-    }
-
-    SpriteManager getSpriteManager() {
-        return spriteManager;
     }
 
     String reverseTranslateMenuOption(String option) {
