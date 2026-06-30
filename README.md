@@ -5,7 +5,7 @@ Plugin RuneLite que traduz o Old School RuneScape para Português Brasileiro em 
 Autor: Walter Rezende
 
 - [Plugin Hub](https://runelite.net/plugin-hub/Walter%20Rezende)
-- [Discord]([https://discord.gg/dJNNTgs5Q](https://discord.gg/4eAbaj29Gt))
+- [Discord]([https://discord.gg/dJNNTgs5Q](https://discord.gg/4eAbaj29Gt)
 - [Reportar problema](https://github.com/walterrezende12-tech/Traducao-OSRS-BR/issues)
 
 
