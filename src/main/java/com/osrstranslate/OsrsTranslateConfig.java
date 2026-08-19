@@ -7,17 +7,57 @@ import net.runelite.client.config.ConfigSection;
 
 @ConfigGroup("osrstranslate")
 public interface OsrsTranslateConfig extends Config {
+    enum TranslationLanguage {
+        PORTUGUESE_BRAZIL("Português", "pt-BR"),
+        SPANISH("Espanhol", "ESP");
+
+        private final String displayName;
+        private final String repositoryFolder;
+
+        TranslationLanguage(String displayName, String repositoryFolder) {
+            this.displayName = displayName;
+            this.repositoryFolder = repositoryFolder;
+        }
+
+        String getRepositoryFolder() {
+            return repositoryFolder;
+        }
+
+        @Override
+        public String toString() {
+            return displayName;
+        }
+    }
+
+    @ConfigSection(
+        name = "Idioma",
+        description = "Seleciona o idioma das traduções",
+        position = 0
+    )
+    String languageSection = "Idioma";
+
+    @ConfigItem(
+        keyName = "translationLanguage",
+        name = "Idioma",
+        description = "Seleciona o idioma baixado do repositório oficial",
+        section = languageSection,
+        position = 0
+    )
+    default TranslationLanguage translationLanguage() {
+        return TranslationLanguage.PORTUGUESE_BRAZIL;
+    }
+
     @ConfigSection(
         name = "Traduções Estáticas",
         description = "Configurações de traduções para interfaces do jogo",
-        position = 0
+        position = 1
     )
     String staticTranslations = "Traduções Estáticas";
 
     @ConfigItem(
         keyName = "enableDialogues",
         name = "Traduzir diálogos",
-        description = "Traduz diálogos de NPCs, jogadores, opções e sprites",
+        description = "Traduz diálogos de NPCs, opções, sprites e ações",
         section = staticTranslations,
         position = 0
     )
@@ -61,7 +101,7 @@ public interface OsrsTranslateConfig extends Config {
     @ConfigItem(
         keyName = "enableMenuEntries",
         name = "Traduzir opções de menu",
-        description = "Traduz opções de clique direito",
+        description = "Traduz opções de menu dos npcs, objetos e clique direito",
         section = staticTranslations,
         position = 4
     )
@@ -83,7 +123,7 @@ public interface OsrsTranslateConfig extends Config {
     @ConfigItem(
         keyName = "enableGameMessages",
         name = "Traduzir mensagens do jogo",
-        description = "Traduz mensagens do chat do jogo",
+        description = "Traduz mensagens do jogo como examinar, ações que aparecem no chat do jogo",
         section = staticTranslations,
         position = 6
     )
@@ -99,6 +139,35 @@ public interface OsrsTranslateConfig extends Config {
         position = 7
     )
     default boolean enableWelcome() {
+        return true;
+    }
+
+    @ConfigItem(
+        keyName = "enableSettings",
+        name = "Traduzir Settings",
+        description = "Traduz textos da interface de configuracoes",
+        section = staticTranslations,
+        position = 8
+    )
+    default boolean enableSettings() {
+        return true;
+    }
+
+    @ConfigSection(
+        name = "Correções Visuais",
+        description = "Ajustes de layout e apresentação",
+        position = 2
+    )
+    String visualFixes = "Correções Visuais";
+
+    @ConfigItem(
+        keyName = "enableTextWrapFix",
+        name = "Espaçamento entre linhas",
+        description = "Ajusta automaticamente a altura das linhas quando o texto traduzido é maior",
+        section = visualFixes,
+        position = 0
+    )
+    default boolean enableTextWrapFix() {
         return true;
     }
 }

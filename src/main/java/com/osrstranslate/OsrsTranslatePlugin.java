@@ -1,15 +1,16 @@
 package com.osrstranslate;
 
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
+import com.google.gson.Gson;
 import com.google.inject.Provides;
 import lombok.extern.slf4j.Slf4j;
+import okhttp3.OkHttpClient;
 import net.runelite.api.Actor;
 import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.MessageNode;
+import net.runelite.api.Menu;
+import net.runelite.api.MenuEntry;
 import net.runelite.api.NPC;
 import net.runelite.api.events.BeforeRender;
 import net.runelite.api.events.ChatMessage;
@@ -17,24 +18,21 @@ import net.runelite.api.events.GameTick;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.MenuOptionClicked;
 import net.runelite.api.events.OverheadTextChanged;
+import net.runelite.api.events.PostMenuSort;
+import net.runelite.api.gameval.VarClientID;
 import net.runelite.api.events.WidgetLoaded;
 import net.runelite.api.widgets.InterfaceID;
 import net.runelite.api.widgets.Widget;
+import net.runelite.client.RuneLite;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 
 import javax.inject.Inject;
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -45,7 +43,6 @@ import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -56,16 +53,30 @@ import java.util.regex.Pattern;
     tags = {"translate", "portuguese", "ptbr"}
 )
 public class OsrsTranslatePlugin extends Plugin {
+    private static final int CHATBOX_UNIVERSE = 162;
     private static final int DIALOG_MESSAGE = 229;
+    private static final int CHAT_OVERLAY = 263;
+    private static final int PLAYER_DESIGN = 679;
+    private static final int TUTORIAL_PLAYER_EXPERIENCE = 929;
+    private static final int TUTORIAL_DISPLAY_NAME = 558;
     private static final int ITEM_PREVIEW = 203;
     private static final int SKILL_GUIDE = 214;
+    private static final int SKILL_GUIDE_ALTERNATE = 860;
     private static final int BOOKS_NOTES = 680;
+    private static final int QUEST_SCROLL = 153;
     private static final int QUEST_JOURNAL_MINIMAP = 782;
     private static final int QUEST_JOURNAL = 119;
     private static final int WELCOME_SCREEN = 378;
+    private static final int SETTINGS = 134;
+    private static final int BANK_PIN = 213;
+    private static final int MACRO_MIME_EMOTES = 188;
+    private static final int CRAFTING_GOLD = 446;
+    private static final int TOPLEVEL_OSRS_STRETCH = 161;
     private static final long LOGIN_INSPECTION_WINDOW_MS = 30_000L;
     private static final int LOGIN_GROUP_SCAN_LIMIT = 900;
     private static final int LOGIN_CHILD_SCAN_LIMIT = 200;
+    private static final String REMOTE_MANIFEST_URL = RemoteTranslationService.DEFAULT_MANIFEST_URL;
+    private static final int REMOTE_UPDATE_INTERVAL_MINUTES = 60;
 
     private static final int[] DIALOG_INTERFACES = {
         InterfaceID.DIALOG_NPC,
@@ -80,6 +91,7 @@ public class OsrsTranslatePlugin extends Plugin {
     };
 
     private static final int[] QUEST_INTERFACES = {
+        QUEST_SCROLL,
         QUEST_JOURNAL_MINIMAP,
         QUEST_JOURNAL,
     };
@@ -89,373 +101,178 @@ public class OsrsTranslatePlugin extends Plugin {
         BOOKS_NOTES,
     };
 
+    private static final int[] SKILL_GUIDE_INTERFACES = {
+        SKILL_GUIDE,
+        SKILL_GUIDE_ALTERNATE,
+    };
+
+    private static final int[] SETTINGS_INTERFACES = {
+        SETTINGS,
+        BANK_PIN,
+        TOPLEVEL_OSRS_STRETCH,
+    };
+
     private static final Pattern HTML_TAG = Pattern.compile("<[^>]+>");
     private static final Pattern BR_TAG = Pattern.compile("(?i)<br\\s*/?>");
-    private static final Pattern PLACEHOLDER = Pattern.compile("\\[[^\\]]+\\]");
     private static final Pattern START_TAGS = Pattern.compile("^(<str>|<col=[^>]+>)+");
-    private static final Pattern WELCOME_LAST_LOGIN_PATTERN =
-        Pattern.compile("^You last logged in (.+) ago\\.$");
-    private static final Pattern ENGLISH_DURATION_UNIT_PATTERN =
-        Pattern.compile("\\b(\\d[\\d,]*)\\s+(day|days|hour|hours|minute|minutes|second|seconds)\\b");
-    private static final Pattern ENGLISH_SINGLE_DURATION_UNIT_PATTERN =
-        Pattern.compile("\\b(a|an)\\s+(day|hour|minute|second)\\b");
-    private static final Pattern HANS_PATTERN = Pattern.compile(
-        "^You've spent (\\d[\\d,]*) day(?:s)?, (\\d[\\d,]*) hour(?:s)?, "
-            + "(\\d[\\d,]*) minute(?:s)? in the world since you arrived "
-            + "(\\d[\\d,]*) day(?:s)? ago\\.$"
+    private static final Set<String> TRIVIAL_MENU_OPTIONS = Set.of(
+        "Walk here",
+        "Cancel",
+        "Continue"
     );
-    private static final Pattern NUMBER_PATTERN = Pattern.compile("(\\d[\\d,]*)");
-
     @Inject private Client client;
     @Inject private ClientThread clientThread;
     @Inject private OsrsTranslateConfig config;
+    @Inject private Gson gson;
+    @Inject private OkHttpClient httpClient;
     private final ExaminePluginBridge examinePluginBridge = new ExaminePluginBridge();
-    private volatile Map<String, String> translations = Collections.emptyMap();
-    private volatile Map<String, String> translationsSkills = Collections.emptyMap();
-    private volatile Map<String, String> translationsQuests = Collections.emptyMap();
-    private volatile Map<String, String> translationsItems = Collections.emptyMap();
-    private volatile Map<String, String> translationsMenu = Collections.emptyMap();
-    private volatile Map<String, String> translationsOverhead = Collections.emptyMap();
-    private volatile Map<String, String> translationsGameMessage = Collections.emptyMap();
-    private volatile Map<String, String> translationsWelcome = Collections.emptyMap();
-
-    private volatile Set<String> translationValues = Collections.emptySet();
-    private volatile Set<String> translationSkillsValues = Collections.emptySet();
-    private volatile Set<String> translationQuestsValues = Collections.emptySet();
-    private volatile Set<String> translationItemsValues = Collections.emptySet();
-    private volatile Set<String> translationGameMessageValues = Collections.emptySet();
-    private volatile Set<String> translationWelcomeValues = Collections.emptySet();
-    private volatile List<PatternEntry> regexTranslations = Collections.emptyList();
-    private volatile List<PatternEntry> regexGameMessageTranslations = Collections.emptyList();
-    private volatile List<PatternEntry> regexWelcomeTranslations = Collections.emptyList();
-    private volatile Map<String, String> reverseTranslationsMenu = Collections.emptyMap();
+    private final TranslationRepository translationRepository = new TranslationRepository();
+    private final WelcomeTranslationService welcomeTranslationService = new WelcomeTranslationService();
+    private volatile TranslationState translationState = TranslationState.empty();
 
     private boolean skillGuideOpen;
     private boolean skillGuideNeedsTranslation;
-    private ScheduledExecutorService reloadScheduler;
-    private final AtomicLong lastModified = new AtomicLong(0);
-    private final AtomicLong lastModifiedSkills = new AtomicLong(0);
-    private final AtomicLong lastModifiedQuests = new AtomicLong(0);
-    private final AtomicLong lastModifiedItems = new AtomicLong(0);
-    private final AtomicLong lastModifiedMenu = new AtomicLong(0);
-    private final AtomicLong lastModifiedOverhead = new AtomicLong(0);
-    private final AtomicLong lastModifiedGameMessage = new AtomicLong(0);
-    private final AtomicLong lastModifiedWelcome = new AtomicLong(0);
-    private File hotReloadFile;
-    private File hotReloadSkillsFile;
-    private File hotReloadQuestsFile;
-    private File hotReloadItemsFile;
-    private File hotReloadMenuFile;
-    private File hotReloadOverheadFile;
-    private File hotReloadGameMessageFile;
-    private File hotReloadWelcomeFile;
+    private int skillGuideInterfaceId = SKILL_GUIDE;
+    private String lastTutorialPlayerExperienceSnapshot = "";
+    private String lastChatboxUniverseSnapshot = "";
+    private String lastChatOverlaySnapshot = "";
+    private ScheduledExecutorService remoteUpdateScheduler;
+    private RemoteTranslationService remoteTranslationService;
     private long loginInspectionDeadline;
     private final Set<Integer> inspectedLoginGroups = new HashSet<>();
     private final Set<Integer> loginInterfaceGroups = new HashSet<>();
 
-    private static class PatternEntry {
-        private final Pattern pattern;
-        private final String translation;
-
-        private PatternEntry(Pattern pattern, String translation) {
-            this.pattern = pattern;
-            this.translation = translation;
-        }
-    }
-
-    private static class TranslationDomain {
-        private final Map<String, String> translations;
-        private final Set<String> values;
-        private final boolean useRegexFallback;
-
-        private TranslationDomain(Map<String, String> translations, Set<String> values, boolean useRegexFallback) {
-            this.translations = translations;
-            this.values = values;
-            this.useRegexFallback = useRegexFallback;
-        }
-    }
-
     @Override
     protected void startUp() {
         log.info("[OsrsTranslatePlugin] startUp() chamado!");
-        configureHotReloadFiles();
-        loadTranslations();
-        startHotReloadWatcher();
+        OsrsTranslateConfigLocalization.start(config.translationLanguage());
+        File translationCacheRoot = new File(
+            RuneLite.RUNELITE_DIR,
+            "osrs-translate" + File.separator + "translations"
+        );
+        log.info("Cache de traducoes remotas: {}", translationCacheRoot.getAbsolutePath());
+        remoteTranslationService = new RemoteTranslationService(
+            httpClient,
+            gson,
+            translationCacheRoot
+        );
+        translationRepository.configureRemoteCacheDirectory(
+            remoteTranslationService.getActiveDirectory(selectedLanguageFolder())
+        );
+        translationState = translationRepository.loadState();
+        startRemoteTranslationUpdater();
     }
 
     @Override
     protected void shutDown() {
         log.info("[OsrsTranslatePlugin] shutDown() chamado!");
-        if (reloadScheduler != null) {
-            reloadScheduler.shutdownNow();
-            reloadScheduler = null;
+        OsrsTranslateConfigLocalization.stop();
+        if (remoteUpdateScheduler != null) {
+            remoteUpdateScheduler.shutdownNow();
+            remoteUpdateScheduler = null;
         }
-        translations = Collections.emptyMap();
-        translationsSkills = Collections.emptyMap();
-        translationsQuests = Collections.emptyMap();
-        translationsItems = Collections.emptyMap();
-        translationsMenu = Collections.emptyMap();
-        translationsOverhead = Collections.emptyMap();
-        translationsGameMessage = Collections.emptyMap();
-        translationsWelcome = Collections.emptyMap();
-        translationValues = Collections.emptySet();
-        translationSkillsValues = Collections.emptySet();
-        translationQuestsValues = Collections.emptySet();
-        translationItemsValues = Collections.emptySet();
-        translationGameMessageValues = Collections.emptySet();
-        translationWelcomeValues = Collections.emptySet();
-        regexTranslations = Collections.emptyList();
-        regexGameMessageTranslations = Collections.emptyList();
-        regexWelcomeTranslations = Collections.emptyList();
-        reverseTranslationsMenu = Collections.emptyMap();
+        remoteTranslationService = null;
+        translationState = TranslationState.empty();
         skillGuideOpen = false;
         skillGuideNeedsTranslation = false;
+        skillGuideInterfaceId = SKILL_GUIDE;
+        lastTutorialPlayerExperienceSnapshot = "";
+        lastChatboxUniverseSnapshot = "";
+        lastChatOverlaySnapshot = "";
         loginInspectionDeadline = 0L;
         inspectedLoginGroups.clear();
         loginInterfaceGroups.clear();
     }
 
-    private void loadTranslations() {
-        Map<String, String> newTranslations = loadMap("/com/osrstranslate/translations.json");
-        Map<String, String> newSkills = loadMap("/com/osrstranslate/translations_skills.json");
-        Map<String, String> newQuests = loadMap("/com/osrstranslate/translations_quests.json");
-        Map<String, String> newItems = loadMap("/com/osrstranslate/translations_items.json");
-        Map<String, String> newMenu = loadMap("/com/osrstranslate/translations_menu.json");
-        Map<String, String> newOverhead = loadMap("/com/osrstranslate/translations_overhead.json");
-        Map<String, String> newGameMessage = loadMap("/com/osrstranslate/translations_game_message.json");
-        Map<String, String> newWelcome = loadMap("/com/osrstranslate/translations_welcome.json");
+    private void startRemoteTranslationUpdater() {
+        if (remoteTranslationService == null) {
+            return;
+        }
 
-        translations = newTranslations;
-        translationsSkills = newSkills;
-        translationsQuests = newQuests;
-        translationsItems = newItems;
-        translationsMenu = newMenu;
-        translationsOverhead = newOverhead;
-        translationsGameMessage = newGameMessage;
-        translationsWelcome = newWelcome;
-        translationValues = new HashSet<>(newTranslations.values());
-        translationSkillsValues = new HashSet<>(newSkills.values());
-        translationQuestsValues = new HashSet<>(newQuests.values());
-        translationItemsValues = new HashSet<>(newItems.values());
-        translationGameMessageValues = new HashSet<>(newGameMessage.values());
-        translationWelcomeValues = new HashSet<>(newWelcome.values());
-        regexTranslations = compileRegexTranslations(newTranslations);
-        regexGameMessageTranslations = compileRegexTranslations(newGameMessage);
-        regexWelcomeTranslations = compileRegexTranslations(newWelcome);
-        reverseTranslationsMenu = buildReverseMenuMap(newMenu);
+        if (remoteUpdateScheduler != null) {
+            remoteUpdateScheduler.shutdownNow();
+        }
 
-        log.info(
-            "PT-BR carregado: dialogos={} skills={} quests={} items={} menu={} overhead={} gameMessages={} welcome={} regex={} welcomeRegex={}",
-            newTranslations.size(), newSkills.size(), newQuests.size(), newItems.size(), newMenu.size(),
-            newOverhead.size(), newGameMessage.size(), newWelcome.size(),
-            regexTranslations.size(), regexWelcomeTranslations.size()
+        remoteUpdateScheduler = Executors.newSingleThreadScheduledExecutor();
+        remoteUpdateScheduler.execute(this::checkRemoteTranslationUpdate);
+        remoteUpdateScheduler.scheduleWithFixedDelay(
+            this::checkRemoteTranslationUpdate,
+            REMOTE_UPDATE_INTERVAL_MINUTES,
+            REMOTE_UPDATE_INTERVAL_MINUTES,
+            TimeUnit.MINUTES
         );
     }
 
-    private void configureHotReloadFiles() {
+    private void checkRemoteTranslationUpdate() {
         try {
-            hotReloadFile = resolveHotReloadFile("/com/osrstranslate/translations.json");
-            hotReloadSkillsFile = resolveHotReloadFile("/com/osrstranslate/translations_skills.json");
-            hotReloadQuestsFile = resolveHotReloadFile("/com/osrstranslate/translations_quests.json");
-            hotReloadItemsFile = resolveHotReloadFile("/com/osrstranslate/translations_items.json");
-            hotReloadMenuFile = resolveHotReloadFile("/com/osrstranslate/translations_menu.json");
-            hotReloadOverheadFile = resolveHotReloadFile("/com/osrstranslate/translations_overhead.json");
-            hotReloadGameMessageFile = resolveHotReloadFile("/com/osrstranslate/translations_game_message.json");
-            hotReloadWelcomeFile = resolveHotReloadFile("/com/osrstranslate/translations_welcome.json");
+            String languageFolder = selectedLanguageFolder();
+            RemoteTranslationService.UpdateResult result = remoteTranslationService.update(
+                REMOTE_MANIFEST_URL,
+                languageFolder
+            );
+            if (!languageFolder.equals(selectedLanguageFolder())) {
+                return;
+            }
+            boolean sourceChanged = translationRepository.configureRemoteCacheDirectory(
+                result.getActiveDirectory()
+            );
+            if (result.isChanged() || sourceChanged) {
+                translationState = translationRepository.loadState();
+                if (skillGuideOpen) {
+                    skillGuideNeedsTranslation = true;
+                }
+                log.info("Traducoes remotas atualizadas para a versao {}", result.getVersion());
+            } else {
+                log.debug("Traducoes remotas ja estao na versao {}", result.getVersion());
+            }
         } catch (Exception e) {
-            log.debug("Hot-reload indisponivel", e);
+            log.warn("Nao foi possivel atualizar as traducoes remotas; mantendo o cache atual", e);
         }
     }
 
-    private File resolveHotReloadFile(String resourcePath) {
-        try {
-            java.net.URL url = getClass().getResource(resourcePath);
-            if (url == null || !"file".equals(url.getProtocol())) {
-                return null;
-            }
+    @Subscribe
+    public void onConfigChanged(ConfigChanged event) {
+        if (!"osrstranslate".equals(event.getGroup())) {
+            return;
+        }
 
-            File buildFile = new File(url.toURI());
-            File srcFile = new File(buildFile.getAbsolutePath()
-                .replace(
-                    File.separator + "build" + File.separator + "resources" + File.separator + "main" + File.separator,
-                    File.separator + "src" + File.separator + "main" + File.separator + "resources" + File.separator
-                ));
+        OsrsTranslateConfig.TranslationLanguage changedLanguage = languageFromConfigValue(
+            event.getNewValue()
+        );
+        OsrsTranslateConfigLocalization.localize(
+            changedLanguage == null ? config.translationLanguage() : changedLanguage
+        );
+        if (!"translationLanguage".equals(event.getKey()) || remoteTranslationService == null) {
+            return;
+        }
 
-            File resolved = srcFile.exists() ? srcFile : buildFile;
-            log.info("Hot-reload ativo: monitorando {}", resolved.getAbsolutePath());
-            return resolved;
-        } catch (Exception e) {
-            log.debug("Nao foi possivel resolver hot-reload para {}", resourcePath, e);
+        translationRepository.configureRemoteCacheDirectory(
+            remoteTranslationService.getActiveDirectory(selectedLanguageFolder())
+        );
+        translationState = translationRepository.loadState();
+        if (remoteUpdateScheduler != null && !remoteUpdateScheduler.isShutdown()) {
+            remoteUpdateScheduler.execute(this::checkRemoteTranslationUpdate);
+        }
+    }
+
+    private OsrsTranslateConfig.TranslationLanguage languageFromConfigValue(String value) {
+        if (value == null || value.isEmpty()) {
             return null;
         }
-    }
 
-    private void startHotReloadWatcher() {
-        if (reloadScheduler != null) {
-            reloadScheduler.shutdownNow();
-        }
-
-        reloadScheduler = Executors.newSingleThreadScheduledExecutor();
-        reloadScheduler.scheduleWithFixedDelay(() -> {
-            try {
-                boolean changed = false;
-                changed |= checkHotReloadFile(hotReloadFile, lastModified);
-                changed |= checkHotReloadFile(hotReloadSkillsFile, lastModifiedSkills);
-                changed |= checkHotReloadFile(hotReloadQuestsFile, lastModifiedQuests);
-                changed |= checkHotReloadFile(hotReloadItemsFile, lastModifiedItems);
-                changed |= checkHotReloadFile(hotReloadMenuFile, lastModifiedMenu);
-                changed |= checkHotReloadFile(hotReloadOverheadFile, lastModifiedOverhead);
-                changed |= checkHotReloadFile(hotReloadGameMessageFile, lastModifiedGameMessage);
-                changed |= checkHotReloadFile(hotReloadWelcomeFile, lastModifiedWelcome);
-
-                if (changed) {
-                    loadTranslations();
-                    log.info("Hot-reload: traducoes recarregadas");
-                    if (skillGuideOpen) {
-                        skillGuideNeedsTranslation = true;
-                        log.info("Hot-reload: forcando re-traducao do Skill Guide");
-                    }
-                }
-            } catch (Exception e) {
-                log.warn("Erro no hot-reload", e);
+        for (OsrsTranslateConfig.TranslationLanguage language
+            : OsrsTranslateConfig.TranslationLanguage.values()) {
+            if (value.equals(language.name())
+                || value.equals(language.toString())
+                || value.equals(language.getRepositoryFolder())) {
+                return language;
             }
-        }, 2, 2, TimeUnit.SECONDS);
+        }
+        return null;
     }
 
-    private boolean checkHotReloadFile(File file, AtomicLong lastModifiedRef) {
-        if (file == null || !file.exists()) {
-            return false;
-        }
-
-        long current = file.lastModified();
-        long previous = lastModifiedRef.get();
-        if (current > previous) {
-            lastModifiedRef.set(current);
-            return previous != 0;
-        }
-        return false;
-    }
-
-    private Map<String, String> loadMap(String path) {
-        try (InputStream is = openTranslationStream(path)) {
-            if (is == null) {
-                log.warn("Arquivo de traducao nao encontrado: {}", path);
-                return Collections.emptyMap();
-            }
-            return parseJsonMap(is);
-        } catch (Exception e) {
-            log.error("Erro ao carregar {}", path, e);
-            return Collections.emptyMap();
-        }
-    }
-
-    private InputStream openTranslationStream(String path) throws Exception {
-        File hotReloadTarget = fileForResourcePath(path);
-        if (hotReloadTarget != null && hotReloadTarget.exists()) {
-            updateLastModified(hotReloadTarget, lastModifiedForResourcePath(path));
-            return new FileInputStream(hotReloadTarget);
-        }
-        return getClass().getResourceAsStream(path);
-    }
-
-    private File fileForResourcePath(String path) {
-        switch (path) {
-            case "/com/osrstranslate/translations.json":
-                return hotReloadFile;
-            case "/com/osrstranslate/translations_skills.json":
-                return hotReloadSkillsFile;
-            case "/com/osrstranslate/translations_quests.json":
-                return hotReloadQuestsFile;
-            case "/com/osrstranslate/translations_items.json":
-                return hotReloadItemsFile;
-            case "/com/osrstranslate/translations_menu.json":
-                return hotReloadMenuFile;
-            case "/com/osrstranslate/translations_overhead.json":
-                return hotReloadOverheadFile;
-            case "/com/osrstranslate/translations_game_message.json":
-                return hotReloadGameMessageFile;
-            case "/com/osrstranslate/translations_welcome.json":
-                return hotReloadWelcomeFile;
-            default:
-                return null;
-        }
-    }
-
-    private AtomicLong lastModifiedForResourcePath(String path) {
-        switch (path) {
-            case "/com/osrstranslate/translations.json":
-                return lastModified;
-            case "/com/osrstranslate/translations_skills.json":
-                return lastModifiedSkills;
-            case "/com/osrstranslate/translations_quests.json":
-                return lastModifiedQuests;
-            case "/com/osrstranslate/translations_items.json":
-                return lastModifiedItems;
-            case "/com/osrstranslate/translations_menu.json":
-                return lastModifiedMenu;
-            case "/com/osrstranslate/translations_overhead.json":
-                return lastModifiedOverhead;
-            case "/com/osrstranslate/translations_game_message.json":
-                return lastModifiedGameMessage;
-            case "/com/osrstranslate/translations_welcome.json":
-                return lastModifiedWelcome;
-            default:
-                return null;
-        }
-    }
-
-    private void updateLastModified(File file, AtomicLong lastModifiedRef) {
-        if (file != null && lastModifiedRef != null && file.exists()) {
-            lastModifiedRef.set(file.lastModified());
-        }
-    }
-
-    private Map<String, String> parseJsonMap(InputStream is) {
-        try {
-            JsonElement element = new JsonParser().parse(new InputStreamReader(is, StandardCharsets.UTF_8));
-            JsonObject object = element.getAsJsonObject();
-            Map<String, String> result = new LinkedHashMap<>();
-            for (Map.Entry<String, JsonElement> entry : object.entrySet()) {
-                result.putIfAbsent(entry.getKey(), entry.getValue().getAsString());
-            }
-            return result;
-        } catch (Exception e) {
-            log.error("Erro ao parsear JSON de traducao", e);
-            return Collections.emptyMap();
-        }
-    }
-
-    private List<PatternEntry> compileRegexTranslations(Map<String, String> source) {
-        List<PatternEntry> entries = new ArrayList<>();
-        for (Map.Entry<String, String> entry : source.entrySet()) {
-            if (!entry.getKey().contains("[")) {
-                continue;
-            }
-
-            String[] parts = PLACEHOLDER.split(entry.getKey(), -1);
-            StringBuilder pattern = new StringBuilder();
-            for (int i = 0; i < parts.length; i++) {
-                pattern.append(Pattern.quote(parts[i]));
-                if (i < parts.length - 1) {
-                    pattern.append("(.+?)");
-                }
-            }
-            entries.add(new PatternEntry(Pattern.compile(pattern.toString()), entry.getValue()));
-        }
-        return entries;
-    }
-
-    private Map<String, String> buildReverseMenuMap(Map<String, String> source) {
-        Map<String, String> reverse = new LinkedHashMap<>();
-        for (Map.Entry<String, String> entry : source.entrySet()) {
-            String key = stripMenuText(entry.getKey());
-            String value = normalizeMenuLookup(entry.getValue());
-            if (key.isEmpty() || value.isEmpty()) {
-                continue;
-            }
-            reverse.putIfAbsent(value, key);
-        }
-        return reverse;
+    private String selectedLanguageFolder() {
+        return config.translationLanguage().getRepositoryFolder();
     }
 
     @Subscribe
@@ -481,6 +298,21 @@ public class OsrsTranslatePlugin extends Plugin {
             return;
         }
 
+        if (config.enableGameMessages() && groupId == CHAT_OVERLAY) {
+            scheduleTranslation(groupId);
+            return;
+        }
+
+        if (config.enableMenuEntries()
+            && (groupId == PLAYER_DESIGN
+                || groupId == TUTORIAL_PLAYER_EXPERIENCE
+                || groupId == TUTORIAL_DISPLAY_NAME
+                || groupId == MACRO_MIME_EMOTES
+                || groupId == CRAFTING_GOLD)) {
+            scheduleTranslation(groupId);
+            return;
+        }
+
         if (config.enableQuestJournal() && contains(QUEST_INTERFACES, groupId)) {
             scheduleTranslation(groupId);
             return;
@@ -496,10 +328,15 @@ public class OsrsTranslatePlugin extends Plugin {
             return;
         }
 
-        if (config.enableSkillGuide() && groupId == SKILL_GUIDE) {
+        if (config.enableSkillGuide() && contains(SKILL_GUIDE_INTERFACES, groupId)) {
             skillGuideOpen = true;
             skillGuideNeedsTranslation = true;
-            translateInterface(SKILL_GUIDE);
+            skillGuideInterfaceId = groupId;
+            translateInterface(groupId);
+        }
+
+        if (config.enableSettings() && contains(SETTINGS_INTERFACES, groupId)) {
+            scheduleTranslation(groupId);
         }
     }
 
@@ -542,10 +379,7 @@ public class OsrsTranslatePlugin extends Plugin {
         }
 
         inspectedLoginGroups.add(groupId);
-        log.info("[LoginInspect] groupId={} textos={}", groupId, texts.size());
-        for (Map.Entry<Integer, String> entry : texts.entrySet()) {
-            log.info("[LoginInspect] groupId={} widget={} text='{}'", groupId, entry.getKey(), entry.getValue());
-        }
+        log.debug("[LoginInspect] groupId={} textos={}", groupId, texts.size());
     }
 
     @Subscribe
@@ -621,6 +455,32 @@ public class OsrsTranslatePlugin extends Plugin {
                 collectWidgetTexts(child, texts);
             }
         }
+
+        Widget[] nestedChildren = widget.getNestedChildren();
+        if (nestedChildren != null) {
+            for (Widget child : nestedChildren) {
+                collectWidgetTexts(child, texts);
+            }
+        }
+    }
+
+    private String buildWidgetTextSnapshot(int interfaceId) {
+        Widget root = client.getWidget(interfaceId, 0);
+        if (root == null || root.isHidden()) {
+            return "";
+        }
+
+        Map<Integer, String> texts = new LinkedHashMap<>();
+        collectWidgetTexts(root, texts);
+        if (texts.isEmpty()) {
+            return "";
+        }
+
+        StringBuilder snapshot = new StringBuilder();
+        for (Map.Entry<Integer, String> entry : texts.entrySet()) {
+            snapshot.append(entry.getKey()).append('=').append(entry.getValue()).append('\n');
+        }
+        return snapshot.toString();
     }
 
     private boolean containsLetters(String text) {
@@ -636,6 +496,13 @@ public class OsrsTranslatePlugin extends Plugin {
     public void onMenuOptionClicked(MenuOptionClicked event) {
         examinePluginBridge.restoreEnglishOption(event, this);
 
+        if (config.enableSettings()) {
+            Widget bankPinRoot = client.getWidget(BANK_PIN, 0);
+            if (bankPinRoot != null && !bankPinRoot.isHidden()) {
+                clientThread.invokeLater(() -> clientThread.invokeLater(() -> translateInterface(BANK_PIN)));
+            }
+        }
+
         if (!skillGuideOpen || !config.enableSkillGuide()) {
             return;
         }
@@ -643,28 +510,122 @@ public class OsrsTranslatePlugin extends Plugin {
         String option = event.getMenuOption();
         log.info("[DEBUG MenuOptionClicked] option='{}' target='{}' action={}",
             option, event.getMenuTarget(), event.getMenuAction());
-        if ("View".equals(option) || "Visualizar".equals(option)) {
+        String englishOption = reverseTranslateMenuOption(option);
+        if ("View".equals(option) || "View".equals(englishOption)) {
             skillGuideNeedsTranslation = true;
-            translateInterface(SKILL_GUIDE);
+            translateInterface(skillGuideInterfaceId);
         }
     }
 
     @Subscribe
     public void onBeforeRender(BeforeRender event) {
+        suppressMouseHighlightTooltipForTranslatedMenuOptions();
+        translateDynamicInterfaces();
+
         if (!skillGuideOpen || !config.enableSkillGuide()) {
             return;
         }
 
-        Widget root = client.getWidget(SKILL_GUIDE, 0);
-        if (root == null || root.isHidden()) {
+        int visibleSkillGuide = findVisibleInterface(SKILL_GUIDE_INTERFACES);
+        if (visibleSkillGuide < 0) {
             skillGuideOpen = false;
             skillGuideNeedsTranslation = false;
+            skillGuideInterfaceId = SKILL_GUIDE;
             return;
         }
+        skillGuideInterfaceId = visibleSkillGuide;
 
         if (skillGuideNeedsTranslation) {
             skillGuideNeedsTranslation = false;
-            translateInterface(SKILL_GUIDE);
+            translateInterface(skillGuideInterfaceId);
+        }
+    }
+
+    private int findVisibleInterface(int[] interfaceIds) {
+        for (int interfaceId : interfaceIds) {
+            Widget root = client.getWidget(interfaceId, 0);
+            if (root != null && !root.isHidden()) {
+                return interfaceId;
+            }
+        }
+        return -1;
+    }
+
+    private void translateDynamicInterfaces() {
+        if (config.enableMenuEntries()) {
+            String tutorialSnapshot = buildWidgetTextSnapshot(TUTORIAL_PLAYER_EXPERIENCE);
+            String displayNameSnapshot = buildWidgetTextSnapshot(TUTORIAL_DISPLAY_NAME);
+            String snapshot = !displayNameSnapshot.isEmpty() ? displayNameSnapshot : tutorialSnapshot;
+
+            if (!snapshot.isEmpty() && !snapshot.equals(lastTutorialPlayerExperienceSnapshot)) {
+                lastTutorialPlayerExperienceSnapshot = snapshot;
+                if (!displayNameSnapshot.isEmpty()) {
+                    translateInterface(TUTORIAL_DISPLAY_NAME);
+                }
+                if (!tutorialSnapshot.isEmpty()) {
+                    translateInterface(TUTORIAL_PLAYER_EXPERIENCE);
+                }
+            }
+
+            Widget macroMimeRoot = client.getWidget(MACRO_MIME_EMOTES, 0);
+            if (macroMimeRoot != null && !macroMimeRoot.isHidden()) {
+                translateInterface(MACRO_MIME_EMOTES);
+            }
+
+            Widget craftingGoldRoot = client.getWidget(CRAFTING_GOLD, 0);
+            if (craftingGoldRoot != null && !craftingGoldRoot.isHidden()) {
+                translateInterface(CRAFTING_GOLD);
+            }
+        }
+
+        if (config.enableGameMessages()) {
+            String overlaySnapshot = buildWidgetTextSnapshot(CHAT_OVERLAY);
+            if (!overlaySnapshot.isEmpty() && !overlaySnapshot.equals(lastChatOverlaySnapshot)) {
+                lastChatOverlaySnapshot = overlaySnapshot;
+                translateInterface(CHAT_OVERLAY);
+            }
+        }
+
+        if (config.enableWelcome()) {
+            Widget welcomeRoot = client.getWidget(WELCOME_SCREEN, 0);
+            if (welcomeRoot != null && !welcomeRoot.isHidden()) {
+                translateInterface(WELCOME_SCREEN);
+            }
+
+            if (isLoginScreenState()) {
+                for (int groupId : loginInterfaceGroups) {
+                    if (groupId != WELCOME_SCREEN) {
+                        translateInterface(groupId);
+                    }
+                }
+            }
+        }
+    }
+
+    private void suppressMouseHighlightTooltipForTranslatedMenuOptions() {
+        if (!config.enableMenuEntries() || client.isMenuOpen()) {
+            return;
+        }
+
+        MenuEntry[] menuEntries = client.getMenuEntries();
+        if (menuEntries == null || menuEntries.length == 0) {
+            return;
+        }
+
+        MenuEntry lastEntry = menuEntries[menuEntries.length - 1];
+        if (lastEntry == null) {
+            return;
+        }
+
+        String englishOption = reverseTranslateMenuOption(lastEntry.getOption());
+        if (englishOption == null || !TRIVIAL_MENU_OPTIONS.contains(englishOption)) {
+            return;
+        }
+
+        int currentCycle = client.getGameCycle();
+        int tooltipTimeout = client.getVarcIntValue(VarClientID.TOOLTIP_TIME);
+        if (tooltipTimeout <= currentCycle) {
+            client.setVarcIntValue(VarClientID.TOOLTIP_TIME, currentCycle + 1);
         }
     }
 
@@ -672,7 +633,7 @@ public class OsrsTranslatePlugin extends Plugin {
         if (interfaceId == ITEM_PREVIEW) {
             log.info("[ItemPreview] Traduzindo interface 203");
         }
-        if (interfaceId == SKILL_GUIDE) {
+        if (contains(SKILL_GUIDE_INTERFACES, interfaceId)) {
             log.info("[SkillGuide] traducao iniciada");
         }
 
@@ -694,9 +655,60 @@ public class OsrsTranslatePlugin extends Plugin {
             if (interfaceId == ITEM_PREVIEW) {
                 log.info("[ItemPreview] processando texto: {}", text);
             }
+
+            int wBefore = widget.getWidth();
+            int hBefore = widget.getHeight();
+            int xBefore = widget.getRelativeX();
+            int yBefore = widget.getRelativeY();
+            int idBefore = widget.getId();
+            int parentId = widget.getParentId();
+            int lineHeightAntes = widget.getLineHeight();
+            int linesAntes = countLines(text);
+
+            applyLineHeightFix(widget, interfaceId, lineHeightAntes);
+
             String translated = translateWidgetText(text, interfaceId);
             if (translated != null) {
+                int canvasW = client.getCanvasWidth();
+                int canvasH = client.getCanvasHeight();
+                log.debug(
+                    "[WidgetDebug] id={} parentId={} pos=({},{}) size=({},{}) "
+                        + "canvas=({},{}) textLen={} transLen={}",
+                    idBefore, parentId, xBefore, yBefore, wBefore, hBefore,
+                    canvasW, canvasH, text.length(), translated.length()
+                );
+                log.debug("[WidgetDebug] text='{}'", text.length() > 80 ? text.substring(0, 80) + "..." : text);
+                log.debug(
+                    "[WidgetDebug] trans='{}'",
+                    translated.length() > 80 ? translated.substring(0, 80) + "..." : translated
+                );
+                log.debug(
+                    "[LineHeightDebug] ANTES: id={} lineHeight={} linhas={}",
+                    idBefore, lineHeightAntes, linesAntes
+                );
+
                 widget.setText(translated);
+
+                int lineHeightDepois = widget.getLineHeight();
+                int linesDepois = countLines(translated);
+                log.debug(
+                    "[LineHeightDebug] DEPOIS: id={} lineHeight={} linhas={}",
+                    idBefore, lineHeightDepois, linesDepois
+                );
+                if (lineHeightAntes != lineHeightDepois) {
+                    log.debug("[LineHeightDebug] MUDOU! id={} {} -> {}", idBefore, lineHeightAntes, lineHeightDepois);
+                }
+
+                applyLineHeightFix(widget, interfaceId, Math.max(lineHeightAntes, lineHeightDepois));
+
+                int wAfter = widget.getWidth();
+                int hAfter = widget.getHeight();
+                if (wAfter != wBefore || hAfter != hBefore) {
+                    log.debug(
+                        "[WidgetDebug] CHANGED! id={} {}x{} -> {}x{}",
+                        idBefore, wBefore, hBefore, wAfter, hAfter
+                    );
+                }
                 return;
             }
         }
@@ -714,6 +726,44 @@ public class OsrsTranslatePlugin extends Plugin {
                 translateWidget(child, interfaceId);
             }
         }
+
+        Widget[] nestedChildren = widget.getNestedChildren();
+        if (nestedChildren != null) {
+            for (Widget child : nestedChildren) {
+                translateWidget(child, interfaceId);
+            }
+        }
+    }
+
+    private void applyLineHeightFix(Widget widget, int interfaceId, int referenceLineHeight) {
+        if (!config.enableTextWrapFix() || widget == null || referenceLineHeight <= 18) {
+            return;
+        }
+
+        // Chat/game chat widgets use their own spacing and get visually squashed if we force line height.
+        if (interfaceId == CHATBOX_UNIVERSE || interfaceId == CHAT_OVERLAY) {
+            return;
+        }
+
+        if (widget.getLineHeight() == 18) {
+            return;
+        }
+
+        widget.setLineHeight(18);
+        log.info("[LineHeightFix] id={} {} -> 18", widget.getId(), referenceLineHeight);
+    }
+
+    private int countLines(String text) {
+        if (text == null || text.isEmpty()) {
+            return 0;
+        }
+        int count = 1;
+        for (int i = 0; i < text.length(); i++) {
+            if (text.charAt(i) == '\n') {
+                count++;
+            }
+        }
+        return count;
     }
 
     private String translateWidgetText(String originalText, int interfaceId) {
@@ -725,76 +775,99 @@ public class OsrsTranslatePlugin extends Plugin {
         String numberingPrefix = QuestHelperCompat.extractNumberingPrefix(cleanText);
         String lookup = numberingPrefix.isEmpty() ? cleanText : QuestHelperCompat.stripNumberingPrefix(cleanText);
 
-        if (isHansTimePlayedMessage(lookup)) {
-            return preserveStartTags(originalText) + numberingPrefix + translateHans(lookup);
+        String specialTranslation = welcomeTranslationService.translateSpecialText(
+            lookup,
+            interfaceId,
+            loginInterfaceGroups,
+            translationState.translationsWelcome
+        );
+        if (specialTranslation != null) {
+            return preserveStartTags(originalText) + numberingPrefix + specialTranslation;
         }
 
-        String welcomeTranslation = translateWelcomeDynamicText(lookup, interfaceId);
-        if (welcomeTranslation != null) {
-            return preserveStartTags(originalText) + numberingPrefix + welcomeTranslation;
-        }
-
-        TranslationDomain domain = domainForInterface(interfaceId);
+        TranslationState state = translationState;
+        TranslationDomain domain = domainForInterface(interfaceId, state);
         if (domain.values.contains(lookup)) {
             return null;
         }
 
-        String id = textToId(lookup);
-        String translation = id == null ? null : domain.translations.get(id);
+        String translation = TranslationLookupHelper.findTranslation(domain.translations, domain.regexPatterns, lookup);
 
-        if (interfaceId == ITEM_PREVIEW) {
-            log.info("[ItemPreview] Buscando: '{}' id={} pt={}", lookup, id, translation);
-        }
-        log.info("[Dialog DEBUG] cleanText='{}' lookup='{}' id='{}' pt={}", cleanText, lookup, id, translation);
-        if (id != null) {
-            boolean hasId = domain.translations.containsKey(id);
-            String valById = domain.translations.get(id);
-            log.info("[Dialog DEBUG] hasId={} valById='{}'", hasId, valById);
-        }
-        boolean hasTextKey = domain.translations.containsKey(lookup);
-        String valByText = domain.translations.get(lookup);
-        log.info("[Dialog DEBUG] hasTextKey={} lookupLen={} valByText='{}'", hasTextKey, lookup.length(), valByText);
-
-        if (translation == null) {
-            translation = domain.translations.get(lookup);
-        }
-        if (translation == null && domain.useRegexFallback) {
-            translation = findRegexTranslation(regexForDomain(domain.translations), lookup);
-        }
-
-        if (translation != null) {
-            log.info("[Dialog] Traduzido: '{}' -> '{}'", lookup, translation);
-        } else {
-            log.info("[Dialog] SEM TRADUCAO: '{}'", lookup);
+        if (translation != null && interfaceId == CHAT_OVERLAY) {
+            translation = normalizeChatOverlayTags(translation);
         }
 
         return translation == null ? null : preserveStartTags(originalText) + numberingPrefix + translation;
     }
 
-    private TranslationDomain domainForInterface(int interfaceId) {
-        if (interfaceId == SKILL_GUIDE) {
-            return new TranslationDomain(translationsSkills, translationSkillsValues, false);
+    private String normalizeChatOverlayTags(String text) {
+        if (text == null || text.isEmpty()) {
+            return text;
         }
-        if (interfaceId == QUEST_JOURNAL_MINIMAP || interfaceId == QUEST_JOURNAL) {
-            return new TranslationDomain(translationsQuests, translationQuestsValues, false);
-        }
-        if (interfaceId == ITEM_PREVIEW || interfaceId == BOOKS_NOTES) {
-            return new TranslationDomain(translationsItems, translationItemsValues, false);
-        }
-        if (interfaceId == WELCOME_SCREEN) {
-            return new TranslationDomain(translationsWelcome, translationWelcomeValues, true);
-        }
-        if (loginInterfaceGroups.contains(interfaceId)) {
-            return new TranslationDomain(translationsWelcome, translationWelcomeValues, true);
-        }
-        return new TranslationDomain(translations, translationValues, true);
+
+        return BR_TAG.matcher(text)
+            .replaceAll("\n")
+            .replace("</col>", "<col=000000>");
     }
 
-    private List<PatternEntry> regexForDomain(Map<String, String> domainTranslations) {
-        if (domainTranslations == translationsWelcome) {
-            return regexWelcomeTranslations;
+    private TranslationDomain domainForInterface(int interfaceId, TranslationState state) {
+        if (contains(SKILL_GUIDE_INTERFACES, interfaceId)) {
+            return new TranslationDomain(
+                state.translationsSkills,
+                state.translationSkillsValues,
+                Collections.emptyList()
+            );
         }
-        return regexTranslations;
+        if (interfaceId == QUEST_JOURNAL_MINIMAP || interfaceId == QUEST_JOURNAL) {
+            return new TranslationDomain(
+                state.translationsQuests,
+                state.translationQuestsValues,
+                Collections.emptyList()
+            );
+        }
+        if (interfaceId == ITEM_PREVIEW || interfaceId == BOOKS_NOTES) {
+            return new TranslationDomain(
+                state.translationsItems,
+                state.translationItemsValues,
+                Collections.emptyList()
+            );
+        }
+        if (interfaceId == PLAYER_DESIGN
+            || interfaceId == TUTORIAL_PLAYER_EXPERIENCE
+            || interfaceId == TUTORIAL_DISPLAY_NAME
+            || interfaceId == MACRO_MIME_EMOTES
+            || interfaceId == CRAFTING_GOLD) {
+            return new TranslationDomain(state.translationsMenu, state.translationMenuValues, Collections.emptyList());
+        }
+        if (interfaceId == CHAT_OVERLAY) {
+            return new TranslationDomain(
+                state.translationsGameMessage,
+                state.translationGameMessageValues,
+                state.regexGameMessageTranslations
+            );
+        }
+        if (interfaceId == WELCOME_SCREEN) {
+            return new TranslationDomain(
+                state.translationsWelcome,
+                state.translationWelcomeValues,
+                state.regexWelcomeTranslations
+            );
+        }
+        if (loginInterfaceGroups.contains(interfaceId)) {
+            return new TranslationDomain(
+                state.translationsWelcome,
+                state.translationWelcomeValues,
+                state.regexWelcomeTranslations
+            );
+        }
+        if (interfaceId == SETTINGS || interfaceId == BANK_PIN) {
+            return new TranslationDomain(
+                state.translationsSettings,
+                state.translationSettingsValues,
+                Collections.emptyList()
+            );
+        }
+        return new TranslationDomain(state.translations, state.translationValues, state.regexTranslations);
     }
 
     @Subscribe
@@ -808,24 +881,47 @@ public class OsrsTranslatePlugin extends Plugin {
             return;
         }
 
-        String clean = cleanText(event.getOverheadText());
+        String clean = normalizeLookupText(cleanText(event.getOverheadText()));
         if (clean.length() <= 3) {
             return;
         }
 
-        String translation = translationsOverhead.get(clean);
+        String translation = TranslationLookupHelper.findTranslation(
+            translationState.translationsOverhead,
+            translationState.regexOverheadTranslations,
+            clean
+        );
         if (translation != null) {
             actor.setOverheadText(translation);
+            log.debug("[OverheadTranslate] '{}' -> '{}'", clean, translation);
         }
     }
 
     @Subscribe
-    public void onMenuEntryAdded(net.runelite.api.events.MenuEntryAdded event) {
+    public void onPostMenuSort(PostMenuSort event) {
         if (!config.enableMenuEntries()) {
             return;
         }
 
-        net.runelite.api.MenuEntry entry = event.getMenuEntry();
+        translateMenu(client.getMenu());
+    }
+
+    private void translateMenu(Menu menu) {
+        if (menu == null) {
+            return;
+        }
+
+        for (MenuEntry entry : menu.getMenuEntries()) {
+            translateMenuEntry(entry);
+
+            Menu subMenu = entry.getSubMenu();
+            if (subMenu != null) {
+                translateMenu(subMenu);
+            }
+        }
+    }
+
+    private void translateMenuEntry(MenuEntry entry) {
         if (entry == null) {
             return;
         }
@@ -836,7 +932,7 @@ public class OsrsTranslatePlugin extends Plugin {
         }
 
         String cleanOption = HTML_TAG.matcher(option).replaceAll("").trim();
-        String translation = translationsMenu.get(cleanOption);
+        String translation = translationState.translationsMenu.get(cleanOption);
         if (translation != null && !translation.equals(cleanOption)) {
             entry.setOption(option.replaceAll(Pattern.quote(cleanOption), Matcher.quoteReplacement(translation)));
         }
@@ -856,7 +952,7 @@ public class OsrsTranslatePlugin extends Plugin {
             return null;
         }
 
-        String english = reverseTranslationsMenu.get(normalized);
+        String english = translationState.reverseTranslationsMenu.get(normalized);
         if (english == null || english.equals(normalized)) {
             return null;
         }
@@ -883,19 +979,28 @@ public class OsrsTranslatePlugin extends Plugin {
         }
 
         String clean = cleanText(event.getMessage());
-        if (clean.isEmpty() || translationGameMessageValues.contains(clean)) {
+        TranslationState state = translationState;
+        if (clean.isEmpty() || state.translationGameMessageValues.contains(clean)) {
             return;
         }
 
-        String translation = findTranslation(translationsGameMessage, clean);
-        if (translation == null) {
-            translation = findRegexTranslation(regexGameMessageTranslations, clean);
-        }
+        String translation = TranslationLookupHelper.findTranslation(
+            state.translationsGameMessage,
+            state.regexGameMessageTranslations,
+            clean
+        );
         if (translation == null) {
             return;
         }
 
-        log.info("[ChatTranslate] type={} original='{}' translated='{}'", event.getType(), clean, translation);
+        if (shouldDeferRichChatOverlayTranslation(translation)) {
+            translateInterface(CHAT_OVERLAY);
+            return;
+        }
+
+        translation = normalizeChatOverlayTags(translation);
+
+        log.debug("[ChatTranslate] type={} translatedLen={}", event.getType(), translation.length());
 
         MessageNode messageNode = event.getMessageNode();
         if (messageNode != null) {
@@ -903,6 +1008,23 @@ public class OsrsTranslatePlugin extends Plugin {
             messageNode.setRuneLiteFormatMessage(translation);
         }
         event.setMessage(translation);
+        client.refreshChat();
+    }
+
+    private boolean shouldDeferRichChatOverlayTranslation(String translation) {
+        if (translation == null) {
+            return false;
+        }
+
+        if (!containsRichOverlayFormatting(translation)) {
+            return false;
+        }
+
+        return !buildWidgetTextSnapshot(CHAT_OVERLAY).isEmpty();
+    }
+
+    private boolean containsRichOverlayFormatting(String text) {
+        return text.contains("<br") || text.contains("</col>") || text.contains("\n");
     }
 
     private boolean shouldTranslateChatMessage(ChatMessageType type) {
@@ -912,6 +1034,7 @@ public class OsrsTranslatePlugin extends Plugin {
 
         switch (type) {
             case GAMEMESSAGE:
+            case LEVELUPMESSAGE:
             case ENGINE:
             case SPAM:
             case MESBOX:
@@ -927,28 +1050,6 @@ public class OsrsTranslatePlugin extends Plugin {
             default:
                 return false;
         }
-    }
-
-    private String findTranslation(Map<String, String> source, String lookup) {
-        String id = textToId(lookup);
-        String translation = id == null ? null : source.get(id);
-        return translation == null ? source.get(lookup) : translation;
-    }
-
-    private String findRegexTranslation(List<PatternEntry> patterns, String lookup) {
-        for (PatternEntry entry : patterns) {
-            Matcher matcher = entry.pattern.matcher(lookup);
-            if (!matcher.matches()) {
-                continue;
-            }
-
-            String result = entry.translation;
-            for (int i = 1; i <= matcher.groupCount(); i++) {
-                result = result.replaceFirst("\\[[^\\]]+\\]", Matcher.quoteReplacement(matcher.group(i)));
-            }
-            return result;
-        }
-        return null;
     }
 
     private String cleanText(String text) {
@@ -968,130 +1069,24 @@ public class OsrsTranslatePlugin extends Plugin {
             .replaceAll("standard Ironmen ", "standard Ironman ");
     }
 
-    private boolean isHansTimePlayedMessage(String lookup) {
-        return lookup.startsWith("You've spent")
-            && lookup.contains("in the world since you arrived")
-            && lookup.endsWith("ago.");
-    }
-
-    private String translateWelcomeDynamicText(String lookup, int interfaceId) {
-        if (interfaceId != WELCOME_SCREEN && !loginInterfaceGroups.contains(interfaceId)) {
-            return null;
-        }
-
-        Matcher matcher = WELCOME_LAST_LOGIN_PATTERN.matcher(lookup);
-        if (!matcher.matches()) {
-            return null;
-        }
-
-        return "Sua última sessão foi há " + translateEnglishDuration(matcher.group(1)) + ".";
-    }
-
     private String preserveStartTags(String text) {
         Matcher matcher = START_TAGS.matcher(text);
         return matcher.find() ? matcher.group() : "";
     }
 
-    private String translateHans(String clean) {
-        Matcher matcher = HANS_PATTERN.matcher(clean);
-        if (matcher.matches()) {
-            return "Voce passou " + matcher.group(1) + " dias, "
-                + matcher.group(2) + " horas, " + matcher.group(3)
-                + " minutos no mundo desde que chegou "
-                + matcher.group(4) + " dias atras.";
-        }
+    private static final class TranslationDomain {
+        private final Map<String, String> translations;
+        private final Set<String> values;
+        private final List<TranslationLookupHelper.PatternEntry> regexPatterns;
 
-        Matcher fallback = NUMBER_PATTERN.matcher(clean);
-        String daysInWorld = findNext(fallback);
-        String hoursInWorld = findNext(fallback);
-        String minutesInWorld = findNext(fallback);
-        String daysSinceArrival = findNext(fallback);
-
-        return "Voce passou " + daysInWorld + " dias, "
-            + hoursInWorld + " horas, " + minutesInWorld
-            + " minutos no mundo desde que chegou "
-            + daysSinceArrival + " dias atras.";
-    }
-
-    private String findNext(Matcher matcher) {
-        return matcher.find() ? matcher.group(1) : "";
-    }
-
-    private String translateEnglishDuration(String text) {
-        Matcher matcher = ENGLISH_DURATION_UNIT_PATTERN.matcher(text);
-        StringBuffer translated = new StringBuffer();
-        boolean found = false;
-
-        while (matcher.find()) {
-            found = true;
-            String amount = matcher.group(1);
-            String unit = matcher.group(2);
-            matcher.appendReplacement(
-                translated,
-                Matcher.quoteReplacement(amount + " " + translateDurationUnit(unit))
-            );
-        }
-
-        if (!found) {
-            Matcher singleMatcher = ENGLISH_SINGLE_DURATION_UNIT_PATTERN.matcher(text);
-            StringBuffer singleTranslated = new StringBuffer();
-            boolean singleFound = false;
-
-            while (singleMatcher.find()) {
-                singleFound = true;
-                String unit = singleMatcher.group(2);
-                singleMatcher.appendReplacement(
-                    singleTranslated,
-                    Matcher.quoteReplacement("1 " + translateDurationUnit(unit))
-                );
-            }
-
-            if (!singleFound) {
-                return text;
-            }
-
-            singleMatcher.appendTail(singleTranslated);
-            return singleTranslated.toString();
-        }
-
-        matcher.appendTail(translated);
-        return translated.toString();
-    }
-
-    private String translateDurationUnit(String unit) {
-        switch (unit) {
-            case "day":
-                return "dia";
-            case "days":
-                return "dias";
-            case "hour":
-                return "hora";
-            case "hours":
-                return "horas";
-            case "minute":
-                return "minuto";
-            case "minutes":
-                return "minutos";
-            case "second":
-                return "segundo";
-            case "seconds":
-                return "segundos";
-            default:
-                return unit;
-        }
-    }
-
-    private String textToId(String text) {
-        try {
-            MessageDigest messageDigest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = messageDigest.digest(text.trim().toLowerCase().getBytes(StandardCharsets.UTF_8));
-            StringBuilder id = new StringBuilder();
-            for (int i = 0; i < 8; i++) {
-                id.append(String.format("%02x", hash[i]));
-            }
-            return id.toString();
-        } catch (NoSuchAlgorithmException e) {
-            return null;
+        private TranslationDomain(
+            Map<String, String> translations,
+            Set<String> values,
+            List<TranslationLookupHelper.PatternEntry> regexPatterns
+        ) {
+            this.translations = translations;
+            this.values = values;
+            this.regexPatterns = regexPatterns;
         }
     }
 
