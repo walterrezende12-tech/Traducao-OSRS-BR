@@ -4,8 +4,6 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
-import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -32,7 +30,7 @@ final class TranslationLookupHelper
 
     static Map<String, String> loadMap(Class<?> owner, String path)
     {
-        try (InputStream is = openTranslationStream(owner, path))
+        try (InputStream is = owner.getResourceAsStream(path))
         {
             if (is == null)
             {
@@ -44,17 +42,6 @@ final class TranslationLookupHelper
         {
             return Collections.emptyMap();
         }
-    }
-
-    static InputStream openTranslationStream(Class<?> owner, String path) throws Exception
-    {
-        String relative = path.startsWith("/") ? path.substring(1) : path;
-        File workspaceFile = new File("src/main/resources", relative);
-        if (workspaceFile.exists())
-        {
-            return new FileInputStream(workspaceFile);
-        }
-        return owner.getResourceAsStream(path);
     }
 
     static Map<String, String> parseJsonMap(InputStream is)
