@@ -16,6 +16,7 @@ import net.runelite.api.events.BeforeRender;
 import net.runelite.api.events.ChatMessage;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.GameStateChanged;
+import net.runelite.api.events.MenuOpened;
 import net.runelite.api.events.MenuOptionClicked;
 import net.runelite.api.events.OverheadTextChanged;
 import net.runelite.api.events.PostMenuSort;
@@ -26,6 +27,7 @@ import net.runelite.api.widgets.Widget;
 import net.runelite.client.RuneLite;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
+import net.runelite.client.eventbus.EventBus;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.plugins.Plugin;
@@ -33,6 +35,8 @@ import net.runelite.client.plugins.PluginDescriptor;
 
 import javax.inject.Inject;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.InputStream;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -125,6 +129,7 @@ public class OsrsTranslatePlugin extends Plugin {
     @Inject private OsrsTranslateConfig config;
     @Inject private Gson gson;
     @Inject private OkHttpClient httpClient;
+    @Inject private EventBus eventBus;
     private final ExaminePluginBridge examinePluginBridge = new ExaminePluginBridge();
     private final TranslationRepository translationRepository = new TranslationRepository();
     private final WelcomeTranslationService welcomeTranslationService = new WelcomeTranslationService();
@@ -138,6 +143,7 @@ public class OsrsTranslatePlugin extends Plugin {
     private String lastChatOverlaySnapshot = "";
     private ScheduledExecutorService remoteUpdateScheduler;
     private RemoteTranslationService remoteTranslationService;
+    private EventBus.Subscriber menuOpenedTranslationSubscriber;
     private long loginInspectionDeadline;
     private final Set<Integer> inspectedLoginGroups = new HashSet<>();
     private final Set<Integer> loginInterfaceGroups = new HashSet<>();
@@ -160,6 +166,17 @@ public class OsrsTranslatePlugin extends Plugin {
             remoteTranslationService.getActiveDirectory(selectedLanguageFolder())
         );
         translationState = translationRepository.loadState();
+        menuOpenedTranslationSubscriber = eventBus.register(
+            MenuOpened.class,
+            event -> {
+                if (config.enableMenuEntries()) {
+                    // Run after Menu Entry Swapper has created its entries and
+                    // submenus, but before the client renders the menu box.
+                    translateMenu(client.getMenu());
+                }
+            },
+            -1000f
+        );
         startRemoteTranslationUpdater();
     }
 
@@ -171,6 +188,8 @@ public class OsrsTranslatePlugin extends Plugin {
             remoteUpdateScheduler.shutdownNow();
             remoteUpdateScheduler = null;
         }
+        eventBus.unregister(menuOpenedTranslationSubscriber);
+        menuOpenedTranslationSubscriber = null;
         remoteTranslationService = null;
         translationState = TranslationState.empty();
         skillGuideOpen = false;
@@ -897,13 +916,28 @@ public class OsrsTranslatePlugin extends Plugin {
         }
     }
 
-    @Subscribe
+    // Menu Entry Swapper also handles PostMenuSort and matches the original
+    // English option/target text. Translate only after it has completed all
+    // built-in, custom, item, NPC, object, UI, and submenu swaps.
+    @Subscribe(priority = -1000f)
     public void onPostMenuSort(PostMenuSort event) {
         if (!config.enableMenuEntries()) {
             return;
         }
 
         translateMenu(client.getMenu());
+    }
+
+    @Subscribe(priority = 1000f)
+    public void onMenuOpened(MenuOpened event) {
+        if (!config.enableMenuEntries()) {
+            return;
+        }
+
+        // Menu Entry Swapper identifies original entries such as Examine when
+        // it creates its Swap left-click/shift-click submenus. Restore those
+        // labels before its MenuOpened handler runs.
+        restoreEnglishMenu(client.getMenu());
     }
 
     private void translateMenu(Menu menu) {
@@ -935,6 +969,32 @@ public class OsrsTranslatePlugin extends Plugin {
         String translation = translationState.translationsMenu.get(cleanOption);
         if (translation != null && !translation.equals(cleanOption)) {
             entry.setOption(option.replaceAll(Pattern.quote(cleanOption), Matcher.quoteReplacement(translation)));
+        }
+    }
+
+    private void restoreEnglishMenu(Menu menu) {
+        if (menu == null) {
+            return;
+        }
+
+        for (MenuEntry entry : menu.getMenuEntries()) {
+            restoreEnglishMenuEntry(entry);
+
+            Menu subMenu = entry.getSubMenu();
+            if (subMenu != null) {
+                restoreEnglishMenu(subMenu);
+            }
+        }
+    }
+
+    private void restoreEnglishMenuEntry(MenuEntry entry) {
+        if (entry == null) {
+            return;
+        }
+
+        String englishOption = reverseTranslateMenuOption(entry.getOption());
+        if (englishOption != null) {
+            entry.setOption(englishOption);
         }
     }
 
@@ -1090,8 +1150,231 @@ public class OsrsTranslatePlugin extends Plugin {
         }
     }
 
+    private static final class TranslationState {
+        private final Map<String, String> translations;
+        private final Map<String, String> translationsSkills;
+        private final Map<String, String> translationsQuests;
+        private final Map<String, String> translationsItems;
+        private final Map<String, String> translationsMenu;
+        private final Map<String, String> translationsOverhead;
+        private final Map<String, String> translationsGameMessage;
+        private final Map<String, String> translationsWelcome;
+        private final Map<String, String> translationsSettings;
+        private final Set<String> translationValues;
+        private final Set<String> translationSkillsValues;
+        private final Set<String> translationQuestsValues;
+        private final Set<String> translationItemsValues;
+        private final Set<String> translationMenuValues;
+        private final Set<String> translationGameMessageValues;
+        private final Set<String> translationWelcomeValues;
+        private final Set<String> translationSettingsValues;
+        private final List<TranslationLookupHelper.PatternEntry> regexTranslations;
+        private final List<TranslationLookupHelper.PatternEntry> regexOverheadTranslations;
+        private final List<TranslationLookupHelper.PatternEntry> regexGameMessageTranslations;
+        private final List<TranslationLookupHelper.PatternEntry> regexWelcomeTranslations;
+        private final Map<String, String> reverseTranslationsMenu;
+
+        private TranslationState(
+            Map<String, String> translations,
+            Map<String, String> translationsSkills,
+            Map<String, String> translationsQuests,
+            Map<String, String> translationsItems,
+            Map<String, String> translationsMenu,
+            Map<String, String> translationsOverhead,
+            Map<String, String> translationsGameMessage,
+            Map<String, String> translationsWelcome,
+            Map<String, String> translationsSettings,
+            Set<String> translationValues,
+            Set<String> translationSkillsValues,
+            Set<String> translationQuestsValues,
+            Set<String> translationItemsValues,
+            Set<String> translationMenuValues,
+            Set<String> translationGameMessageValues,
+            Set<String> translationWelcomeValues,
+            Set<String> translationSettingsValues,
+            List<TranslationLookupHelper.PatternEntry> regexTranslations,
+            List<TranslationLookupHelper.PatternEntry> regexOverheadTranslations,
+            List<TranslationLookupHelper.PatternEntry> regexGameMessageTranslations,
+            List<TranslationLookupHelper.PatternEntry> regexWelcomeTranslations,
+            Map<String, String> reverseTranslationsMenu
+        ) {
+            this.translations = translations;
+            this.translationsSkills = translationsSkills;
+            this.translationsQuests = translationsQuests;
+            this.translationsItems = translationsItems;
+            this.translationsMenu = translationsMenu;
+            this.translationsOverhead = translationsOverhead;
+            this.translationsGameMessage = translationsGameMessage;
+            this.translationsWelcome = translationsWelcome;
+            this.translationsSettings = translationsSettings;
+            this.translationValues = translationValues;
+            this.translationSkillsValues = translationSkillsValues;
+            this.translationQuestsValues = translationQuestsValues;
+            this.translationItemsValues = translationItemsValues;
+            this.translationMenuValues = translationMenuValues;
+            this.translationGameMessageValues = translationGameMessageValues;
+            this.translationWelcomeValues = translationWelcomeValues;
+            this.translationSettingsValues = translationSettingsValues;
+            this.regexTranslations = regexTranslations;
+            this.regexOverheadTranslations = regexOverheadTranslations;
+            this.regexGameMessageTranslations = regexGameMessageTranslations;
+            this.regexWelcomeTranslations = regexWelcomeTranslations;
+            this.reverseTranslationsMenu = reverseTranslationsMenu;
+        }
+
+        private static TranslationState empty() {
+            return new TranslationState(
+                Collections.emptyMap(),
+                Collections.emptyMap(),
+                Collections.emptyMap(),
+                Collections.emptyMap(),
+                Collections.emptyMap(),
+                Collections.emptyMap(),
+                Collections.emptyMap(),
+                Collections.emptyMap(),
+                Collections.emptyMap(),
+                Collections.emptySet(),
+                Collections.emptySet(),
+                Collections.emptySet(),
+                Collections.emptySet(),
+                Collections.emptySet(),
+                Collections.emptySet(),
+                Collections.emptySet(),
+                Collections.emptySet(),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                Collections.emptyMap()
+            );
+        }
+    }
+
+    private static final class TranslationRepository {
+        private static final String TRANSLATIONS = "translations.json";
+        private static final String TRANSLATIONS_SKILLS = "translations_skills.json";
+        private static final String TRANSLATIONS_QUESTS = "translations_quests.json";
+        private static final String TRANSLATIONS_ITEMS = "translations_items.json";
+        private static final String TRANSLATIONS_MENU = "translations_menu.json";
+        private static final String TRANSLATIONS_OVERHEAD = "translations_overhead.json";
+        private static final String TRANSLATIONS_GAME_MESSAGE = "translations_game_message.json";
+        private static final String TRANSLATIONS_WELCOME = "translations_welcome.json";
+        private static final String TRANSLATIONS_SETTINGS = "translations_settings.json";
+
+        private volatile File remoteCacheDirectory;
+
+        private boolean configureRemoteCacheDirectory(File directory) {
+            File previous = remoteCacheDirectory;
+            remoteCacheDirectory = directory;
+            return previous == null ? directory != null : !previous.equals(directory);
+        }
+
+        private TranslationState loadState() {
+            Map<String, String> translations = loadMap(TRANSLATIONS);
+            Map<String, String> translationsSkills = loadMap(TRANSLATIONS_SKILLS);
+            Map<String, String> translationsQuests = loadMap(TRANSLATIONS_QUESTS);
+            Map<String, String> translationsItems = loadMap(TRANSLATIONS_ITEMS);
+            Map<String, String> translationsMenu = loadMap(TRANSLATIONS_MENU);
+            Map<String, String> translationsOverhead = loadMap(TRANSLATIONS_OVERHEAD);
+            Map<String, String> translationsGameMessage = loadMap(TRANSLATIONS_GAME_MESSAGE);
+            Map<String, String> translationsWelcome = loadMap(TRANSLATIONS_WELCOME);
+            Map<String, String> translationsSettings = loadMap(TRANSLATIONS_SETTINGS);
+
+            TranslationState state = new TranslationState(
+                translations,
+                translationsSkills,
+                translationsQuests,
+                translationsItems,
+                translationsMenu,
+                translationsOverhead,
+                translationsGameMessage,
+                translationsWelcome,
+                translationsSettings,
+                new HashSet<>(translations.values()),
+                new HashSet<>(translationsSkills.values()),
+                new HashSet<>(translationsQuests.values()),
+                new HashSet<>(translationsItems.values()),
+                new HashSet<>(translationsMenu.values()),
+                new HashSet<>(translationsGameMessage.values()),
+                new HashSet<>(translationsWelcome.values()),
+                new HashSet<>(translationsSettings.values()),
+                TranslationLookupHelper.compileRegexTranslations(translations),
+                TranslationLookupHelper.compileRegexTranslations(translationsOverhead),
+                TranslationLookupHelper.compileRegexTranslations(translationsGameMessage),
+                TranslationLookupHelper.compileRegexTranslations(translationsWelcome),
+                buildReverseMenuMap(translationsMenu)
+            );
+
+            log.info(
+                "PT-BR carregado: dialogos={} skills={} quests={} items={} menu={} "
+                    + "overhead={} gameMessages={} welcome={} settings={} regex={} overheadRegex={} welcomeRegex={}",
+                translations.size(),
+                translationsSkills.size(),
+                translationsQuests.size(),
+                translationsItems.size(),
+                translationsMenu.size(),
+                translationsOverhead.size(),
+                translationsGameMessage.size(),
+                translationsWelcome.size(),
+                translationsSettings.size(),
+                state.regexTranslations.size(),
+                state.regexOverheadTranslations.size(),
+                state.regexWelcomeTranslations.size()
+            );
+            return state;
+        }
+
+        private Map<String, String> loadMap(String fileName) {
+            File cacheDirectory = remoteCacheDirectory;
+            if (cacheDirectory == null) {
+                return Collections.emptyMap();
+            }
+
+            File remoteFile = new File(cacheDirectory, fileName);
+            if (!remoteFile.isFile()) {
+                log.warn("Arquivo ausente no cache remoto: {}", fileName);
+                return Collections.emptyMap();
+            }
+
+            try (InputStream input = new FileInputStream(remoteFile)) {
+                return TranslationLookupHelper.parseJsonMap(input);
+            } catch (Exception e) {
+                log.warn("Cache remoto invalido para {}", fileName, e);
+                return Collections.emptyMap();
+            }
+        }
+
+        private Map<String, String> buildReverseMenuMap(Map<String, String> source) {
+            Map<String, String> reverse = new LinkedHashMap<>();
+            for (Map.Entry<String, String> entry : source.entrySet()) {
+                String key = stripMenuText(entry.getKey());
+                String value = normalizeMenuLookup(entry.getValue());
+                if (key.isEmpty() || value.isEmpty()) {
+                    continue;
+                }
+                reverse.putIfAbsent(value, key);
+            }
+            return reverse;
+        }
+
+        private String stripMenuText(String text) {
+            return text.replaceAll("<[^>]+>", "").trim();
+        }
+
+        private String normalizeMenuLookup(String text) {
+            return stripMenuText(text).toLowerCase(Locale.ROOT);
+        }
+    }
+
     @Provides
     OsrsTranslateConfig provideConfig(ConfigManager configManager) {
         return configManager.getConfig(OsrsTranslateConfig.class);
     }
-}
+
+    /**
+     * Faz quebra de linha justificada: distribui palavras pra cada linha ter tamanho similar.
+     * @param text texto a quebrar
+     * @param maxCharsPorLinha número máximo de caracteres por linha
+     * @return texto com quebras de linha (\n) balanceadas
+     */
+    }

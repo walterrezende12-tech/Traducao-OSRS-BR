@@ -21,11 +21,13 @@ final class ExaminePluginBridge
         String originalOption = entry.getOption();
         String englishOption = plugin.reverseTranslateMenuOption(originalOption);
 
-        if (!"Examine".equalsIgnoreCase(englishOption))
+        if (englishOption == null)
         {
             return;
         }
 
-        entry.setOption("Examine");
+        // The visible option may be translated, but RuneLite integrations and
+        // plugin callbacks consume the canonical English menu option.
+        entry.setOption(englishOption);
     }
 }
