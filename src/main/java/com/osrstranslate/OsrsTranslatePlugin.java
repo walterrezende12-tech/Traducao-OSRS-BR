@@ -1028,7 +1028,11 @@ public class OsrsTranslatePlugin extends Plugin {
         return stripMenuText(text).toLowerCase(Locale.ROOT);
     }
 
-    @Subscribe
+    // Item Charges, Slayer, Timers and other plugins parse the original English
+    // game message. Listeners with equal priority run in class-name order, so
+    // com.osrstranslate would run before net.runelite.* and hand them the
+    // translated text. Translate only after every other listener has run.
+    @Subscribe(priority = -1000f)
     public void onChatMessage(ChatMessage event) {
         if (!config.enableGameMessages()) {
             return;
