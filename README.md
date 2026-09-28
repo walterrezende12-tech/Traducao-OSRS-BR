@@ -1,22 +1,33 @@
 # OSRS Translate PT-BR
 
-Plugin RuneLite que traduz o Old School RuneScape para Português Brasileiro em
-tempo real.
+Plugin RuneLite que traduz o Old School RuneScape para Português brasileiro e
+Espanhol em tempo real.
 
 Autor: Walter Rezende
 
-- [Plugin Hub](https://runelite.net/plugin-hub/Walter%20Rezende)
+## 🤝 Quer contribuir?
+
+Contribua com traduções, correções de bugs ou novos idiomas. Use o Discord ou relate um problema:
+
 - [Discord](https://discord.gg/4eAbaj29Gt)
-- [Reportar problema](https://github.com/walterrezende12-tech/Traducao-OSRS-BR/issues)
+- [Reportar um problema](https://github.com/walterrezende12-tech/Traducao-OSRS-BR/issues)
 
 ## Funcionalidades
 
 - Tradução de diálogos, opções de resposta e falas acima da cabeça.
-- Tradução de menus, mensagens do jogo, Skill Guide, Quest Journal, itens,
-  livros, tela de boas-vindas e configurações.
+- Tradução de menus, mensagens do jogo, Skill Guide, Quest Journal, diários
+  de conquistas, pergaminhos de pistas, itens, livros e notas, tela de
+  boas-vindas e configurações.
 - Seleção de idioma preparada para novos pacotes de tradução.
-- Compatibilidade com o Quest Helper.
+- Compatibilidade com os plugins:
+  - Quest Helper
+  - Menu Entry Swapper
+  - Item Charges
+  - Friend Notes
+  - Clue Scroll
+  - Examine (preços e valores de alquimia)
 - Atualizações automáticas dos dicionários sem reinstalar o plugin.
+- Modo desenvolvedor para testar dicionários locais com recarga automática.
 
 ## Traduções remotas
 
@@ -41,12 +52,3 @@ O cache fica no diretório do RuneLite:
 
 Abra o RuneLite, acesse **Plugin Hub**, pesquise `OSRS Translate PT-BR` e
 selecione **Install**.
-
-## Configuração
-
-As categorias de tradução podem ser ativadas ou desativadas separadamente no
-painel do plugin. Atualmente o pacote disponível é Português (`pt-BR`).
-
-## Licença
-
-BSD 2-Clause

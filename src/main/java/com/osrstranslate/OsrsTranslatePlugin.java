@@ -70,6 +70,9 @@ public class OsrsTranslatePlugin extends Plugin {
     private static final int QUEST_SCROLL = 153;
     private static final int QUEST_JOURNAL_MINIMAP = 782;
     private static final int QUEST_JOURNAL = 119;
+    private static final int ACHIEVEMENT_DIARY = 259;
+    private static final int ACHIEVEMENT_DIARY_SCROLL = 741;
+    private static final int CLUE_SCROLL_TEXT = net.runelite.api.gameval.InterfaceID.TRAIL_CLUETEXT;
     private static final int WELCOME_SCREEN = 378;
     private static final int SETTINGS = 134;
     private static final int BANK_PIN = 213;
@@ -81,6 +84,7 @@ public class OsrsTranslatePlugin extends Plugin {
     private static final int LOGIN_CHILD_SCAN_LIMIT = 200;
     private static final String REMOTE_MANIFEST_URL = RemoteTranslationService.DEFAULT_MANIFEST_URL;
     private static final int REMOTE_UPDATE_INTERVAL_MINUTES = 60;
+    private static final int LOCAL_TRANSLATION_POLL_SECONDS = 2;
 
     private static final int[] DIALOG_INTERFACES = {
         InterfaceID.DIALOG_NPC,
@@ -98,6 +102,11 @@ public class OsrsTranslatePlugin extends Plugin {
         QUEST_SCROLL,
         QUEST_JOURNAL_MINIMAP,
         QUEST_JOURNAL,
+    };
+
+    private static final int[] ACHIEVEMENT_DIARY_INTERFACES = {
+        ACHIEVEMENT_DIARY,
+        ACHIEVEMENT_DIARY_SCROLL,
     };
 
     private static final int[] ITEM_INTERFACES = {
@@ -142,6 +151,8 @@ public class OsrsTranslatePlugin extends Plugin {
     private String lastChatboxUniverseSnapshot = "";
     private String lastChatOverlaySnapshot = "";
     private ScheduledExecutorService remoteUpdateScheduler;
+    private ScheduledExecutorService localTranslationHotReloadScheduler;
+    private volatile String localTranslationFingerprint = "";
     private RemoteTranslationService remoteTranslationService;
     private EventBus.Subscriber menuOpenedTranslationSubscriber;
     private long loginInspectionDeadline;
@@ -162,10 +173,7 @@ public class OsrsTranslatePlugin extends Plugin {
             gson,
             translationCacheRoot
         );
-        translationRepository.configureRemoteCacheDirectory(
-            remoteTranslationService.getActiveDirectory(selectedLanguageFolder())
-        );
-        translationState = translationRepository.loadState();
+        reloadTranslations();
         menuOpenedTranslationSubscriber = eventBus.register(
             MenuOpened.class,
             event -> {
@@ -177,7 +185,11 @@ public class OsrsTranslatePlugin extends Plugin {
             },
             -1000f
         );
-        startRemoteTranslationUpdater();
+        if (!isLocalTranslationSource()) {
+            startRemoteTranslationUpdater();
+        } else {
+            startLocalTranslationHotReload();
+        }
     }
 
     @Override
@@ -188,6 +200,7 @@ public class OsrsTranslatePlugin extends Plugin {
             remoteUpdateScheduler.shutdownNow();
             remoteUpdateScheduler = null;
         }
+        stopLocalTranslationHotReload();
         eventBus.unregister(menuOpenedTranslationSubscriber);
         menuOpenedTranslationSubscriber = null;
         remoteTranslationService = null;
@@ -223,20 +236,26 @@ public class OsrsTranslatePlugin extends Plugin {
     }
 
     private void checkRemoteTranslationUpdate() {
+        if (isLocalTranslationSource()) {
+            return;
+        }
+
         try {
             String languageFolder = selectedLanguageFolder();
             RemoteTranslationService.UpdateResult result = remoteTranslationService.update(
                 REMOTE_MANIFEST_URL,
                 languageFolder
             );
-            if (!languageFolder.equals(selectedLanguageFolder())) {
+            if (isLocalTranslationSource() || !languageFolder.equals(selectedLanguageFolder())) {
                 return;
             }
             boolean sourceChanged = translationRepository.configureRemoteCacheDirectory(
                 result.getActiveDirectory()
             );
             if (result.isChanged() || sourceChanged) {
-                translationState = translationRepository.loadState();
+                translationState = translationRepository.loadState(
+                    OsrsTranslateConfig.TranslationSource.REMOTE
+                );
                 if (skillGuideOpen) {
                     skillGuideNeedsTranslation = true;
                 }
@@ -261,16 +280,25 @@ public class OsrsTranslatePlugin extends Plugin {
         OsrsTranslateConfigLocalization.localize(
             changedLanguage == null ? config.translationLanguage() : changedLanguage
         );
-        if (!"translationLanguage".equals(event.getKey()) || remoteTranslationService == null) {
+        if ((!"translationLanguage".equals(event.getKey())
+            && !"translationSource".equals(event.getKey())
+            && !"translationHotReload".equals(event.getKey())
+            && !"localTranslationPath".equals(event.getKey())
+            && !"developerMode".equals(event.getKey()))
+            || remoteTranslationService == null) {
             return;
         }
 
-        translationRepository.configureRemoteCacheDirectory(
-            remoteTranslationService.getActiveDirectory(selectedLanguageFolder())
-        );
-        translationState = translationRepository.loadState();
-        if (remoteUpdateScheduler != null && !remoteUpdateScheduler.isShutdown()) {
-            remoteUpdateScheduler.execute(this::checkRemoteTranslationUpdate);
+        reloadTranslations();
+        if (isLocalTranslationSource()) {
+            startLocalTranslationHotReload();
+        } else {
+            stopLocalTranslationHotReload();
+            if (remoteUpdateScheduler == null || remoteUpdateScheduler.isShutdown()) {
+                startRemoteTranslationUpdater();
+            } else {
+                remoteUpdateScheduler.execute(this::checkRemoteTranslationUpdate);
+            }
         }
     }
 
@@ -294,10 +322,112 @@ public class OsrsTranslatePlugin extends Plugin {
         return config.translationLanguage().getRepositoryFolder();
     }
 
+    private boolean isLocalTranslationSource() {
+        return config.developerMode()
+            && config.translationSource() == OsrsTranslateConfig.TranslationSource.LOCAL;
+    }
+
+    private File localTranslationDirectory() {
+        String path = config.localTranslationPath();
+        if (path == null || path.trim().isEmpty()) {
+            return null;
+        }
+        return new File(path.trim());
+    }
+
+    private void reloadTranslations() {
+        String languageFolder = selectedLanguageFolder();
+        translationRepository.configureLocalDirectory(localTranslationDirectory());
+
+        if (isLocalTranslationSource()) {
+            translationState = translationRepository.loadState(
+                OsrsTranslateConfig.TranslationSource.LOCAL
+            );
+            stopRemoteTranslationUpdater();
+            return;
+        }
+
+        translationRepository.configureRemoteCacheDirectory(
+            remoteTranslationService.getActiveDirectory(languageFolder)
+        );
+        translationState = translationRepository.loadState(
+            OsrsTranslateConfig.TranslationSource.REMOTE
+        );
+    }
+
+    private void stopRemoteTranslationUpdater() {
+        if (remoteUpdateScheduler != null) {
+            remoteUpdateScheduler.shutdownNow();
+            remoteUpdateScheduler = null;
+        }
+    }
+
+    private void startLocalTranslationHotReload() {
+        stopLocalTranslationHotReload();
+        if (!isLocalTranslationSource() || !config.translationHotReload()) {
+            return;
+        }
+
+        localTranslationFingerprint = translationRepository.localFingerprint();
+        localTranslationHotReloadScheduler = Executors.newSingleThreadScheduledExecutor();
+        localTranslationHotReloadScheduler.scheduleWithFixedDelay(
+            this::checkLocalTranslationHotReload,
+            LOCAL_TRANSLATION_POLL_SECONDS,
+            LOCAL_TRANSLATION_POLL_SECONDS,
+            TimeUnit.SECONDS
+        );
+    }
+
+    private void stopLocalTranslationHotReload() {
+        if (localTranslationHotReloadScheduler != null) {
+            localTranslationHotReloadScheduler.shutdownNow();
+            localTranslationHotReloadScheduler = null;
+        }
+        localTranslationFingerprint = "";
+    }
+
+    private void checkLocalTranslationHotReload() {
+        if (!isLocalTranslationSource() || !config.translationHotReload()) {
+            return;
+        }
+
+        try {
+            String fingerprint = translationRepository.localFingerprint();
+            if (fingerprint.equals(localTranslationFingerprint)
+                || !translationRepository.areLocalFilesValid()) {
+                return;
+            }
+
+            TranslationState updatedState = translationRepository.loadState(
+                OsrsTranslateConfig.TranslationSource.LOCAL
+            );
+            if (!fingerprint.equals(translationRepository.localFingerprint())) {
+                return;
+            }
+
+            translationState = updatedState;
+            localTranslationFingerprint = fingerprint;
+            if (skillGuideOpen) {
+                clientThread.invokeLater(() -> skillGuideNeedsTranslation = true);
+            }
+            log.info("Traducoes locais recarregadas automaticamente");
+        } catch (Exception e) {
+            log.warn("Nao foi possivel recarregar as traducoes locais", e);
+        }
+    }
+
     @Subscribe
     public void onWidgetLoaded(WidgetLoaded event) {
         int groupId = event.getGroupId();
         log.info("[WidgetLoaded] groupId={}", groupId);
+
+        if (groupId == CLUE_SCROLL_TEXT) {
+            if (config.enableClueScrolls()) {
+                clientThread.invokeLater(() ->
+                    clientThread.invokeLater(() -> translateInterface(CLUE_SCROLL_TEXT)));
+            }
+            return;
+        }
 
         if (config.enableWelcome() && isLoginScreenState()) {
             loginInspectionDeadline = System.currentTimeMillis() + LOGIN_INSPECTION_WINDOW_MS;
@@ -333,6 +463,11 @@ public class OsrsTranslatePlugin extends Plugin {
         }
 
         if (config.enableQuestJournal() && contains(QUEST_INTERFACES, groupId)) {
+            scheduleTranslation(groupId);
+            return;
+        }
+
+        if (config.enableAchievementDiary() && contains(ACHIEVEMENT_DIARY_INTERFACES, groupId)) {
             scheduleTranslation(groupId);
             return;
         }
@@ -837,14 +972,17 @@ public class OsrsTranslatePlugin extends Plugin {
                 Collections.emptyList()
             );
         }
-        if (interfaceId == QUEST_JOURNAL_MINIMAP || interfaceId == QUEST_JOURNAL) {
+        if (interfaceId == QUEST_JOURNAL_MINIMAP
+            || interfaceId == QUEST_JOURNAL
+            || interfaceId == ACHIEVEMENT_DIARY
+            || interfaceId == ACHIEVEMENT_DIARY_SCROLL) {
             return new TranslationDomain(
                 state.translationsQuests,
                 state.translationQuestsValues,
                 Collections.emptyList()
             );
         }
-        if (interfaceId == ITEM_PREVIEW || interfaceId == BOOKS_NOTES) {
+        if (interfaceId == ITEM_PREVIEW || interfaceId == BOOKS_NOTES || interfaceId == CLUE_SCROLL_TEXT) {
             return new TranslationDomain(
                 state.translationsItems,
                 state.translationItemsValues,
@@ -1028,7 +1166,10 @@ public class OsrsTranslatePlugin extends Plugin {
         return stripMenuText(text).toLowerCase(Locale.ROOT);
     }
 
-    @Subscribe
+    // Plugins such as Item Charges parse the original English game message
+    // synchronously. Translate only after their default-priority listeners
+    // have consumed the event, matching the menu integration below.
+    @Subscribe(priority = -1000f)
     public void onChatMessage(ChatMessage event) {
         if (!config.enableGameMessages()) {
             return;
@@ -1262,6 +1403,7 @@ public class OsrsTranslatePlugin extends Plugin {
         private static final String TRANSLATIONS_SETTINGS = "translations_settings.json";
 
         private volatile File remoteCacheDirectory;
+        private volatile File localTranslationDirectory;
 
         private boolean configureRemoteCacheDirectory(File directory) {
             File previous = remoteCacheDirectory;
@@ -1269,16 +1411,59 @@ public class OsrsTranslatePlugin extends Plugin {
             return previous == null ? directory != null : !previous.equals(directory);
         }
 
-        private TranslationState loadState() {
-            Map<String, String> translations = loadMap(TRANSLATIONS);
-            Map<String, String> translationsSkills = loadMap(TRANSLATIONS_SKILLS);
-            Map<String, String> translationsQuests = loadMap(TRANSLATIONS_QUESTS);
-            Map<String, String> translationsItems = loadMap(TRANSLATIONS_ITEMS);
-            Map<String, String> translationsMenu = loadMap(TRANSLATIONS_MENU);
-            Map<String, String> translationsOverhead = loadMap(TRANSLATIONS_OVERHEAD);
-            Map<String, String> translationsGameMessage = loadMap(TRANSLATIONS_GAME_MESSAGE);
-            Map<String, String> translationsWelcome = loadMap(TRANSLATIONS_WELCOME);
-            Map<String, String> translationsSettings = loadMap(TRANSLATIONS_SETTINGS);
+        private void configureLocalDirectory(File directory) {
+            localTranslationDirectory = directory;
+        }
+
+        private String localFingerprint() {
+            File directory = localTranslationDirectory;
+            StringBuilder fingerprint = new StringBuilder();
+            for (String fileName : RemoteTranslationService.REQUIRED_FILES) {
+                File file = directory == null ? null : new File(directory, fileName);
+                if (file == null || !file.isFile()) {
+                    fingerprint.append(fileName).append(":missing;");
+                } else {
+                    fingerprint.append(fileName)
+                        .append(':').append(file.length())
+                        .append(':').append(file.lastModified())
+                        .append(';');
+                }
+            }
+            return fingerprint.toString();
+        }
+
+        private boolean areLocalFilesValid() {
+            File directory = localTranslationDirectory;
+            if (directory == null) {
+                return true;
+            }
+
+            for (String fileName : RemoteTranslationService.REQUIRED_FILES) {
+                File file = new File(directory, fileName);
+                if (!file.isFile()) {
+                    continue;
+                }
+
+                try (InputStream input = new FileInputStream(file)) {
+                    TranslationLookupHelper.parseJsonMapStrict(input);
+                } catch (Exception e) {
+                    log.warn("Aguardando a conclusao da edicao do arquivo local: {}", file);
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private TranslationState loadState(OsrsTranslateConfig.TranslationSource source) {
+            Map<String, String> translations = loadMap(TRANSLATIONS, source);
+            Map<String, String> translationsSkills = loadMap(TRANSLATIONS_SKILLS, source);
+            Map<String, String> translationsQuests = loadMap(TRANSLATIONS_QUESTS, source);
+            Map<String, String> translationsItems = loadMap(TRANSLATIONS_ITEMS, source);
+            Map<String, String> translationsMenu = loadMap(TRANSLATIONS_MENU, source);
+            Map<String, String> translationsOverhead = loadMap(TRANSLATIONS_OVERHEAD, source);
+            Map<String, String> translationsGameMessage = loadMap(TRANSLATIONS_GAME_MESSAGE, source);
+            Map<String, String> translationsWelcome = loadMap(TRANSLATIONS_WELCOME, source);
+            Map<String, String> translationsSettings = loadMap(TRANSLATIONS_SETTINGS, source);
 
             TranslationState state = new TranslationState(
                 translations,
@@ -1324,7 +1509,14 @@ public class OsrsTranslatePlugin extends Plugin {
             return state;
         }
 
-        private Map<String, String> loadMap(String fileName) {
+        private Map<String, String> loadMap(
+            String fileName,
+            OsrsTranslateConfig.TranslationSource source
+        ) {
+            if (source == OsrsTranslateConfig.TranslationSource.LOCAL) {
+                return loadLocalMap(fileName);
+            }
+
             File cacheDirectory = remoteCacheDirectory;
             if (cacheDirectory == null) {
                 return Collections.emptyMap();
@@ -1340,6 +1532,26 @@ public class OsrsTranslatePlugin extends Plugin {
                 return TranslationLookupHelper.parseJsonMap(input);
             } catch (Exception e) {
                 log.warn("Cache remoto invalido para {}", fileName, e);
+                return Collections.emptyMap();
+            }
+        }
+
+        private Map<String, String> loadLocalMap(String fileName) {
+            File directory = localTranslationDirectory;
+            if (directory == null || !directory.isDirectory()) {
+                return Collections.emptyMap();
+            }
+
+            File localFile = new File(directory, fileName);
+            if (!localFile.isFile()) {
+                log.warn("Arquivo local de traducoes ausente: {}", localFile);
+                return Collections.emptyMap();
+            }
+
+            try (InputStream input = new FileInputStream(localFile)) {
+                return TranslationLookupHelper.parseJsonMapStrict(input);
+            } catch (Exception e) {
+                log.warn("Arquivo local de traducoes invalido: {}", localFile, e);
                 return Collections.emptyMap();
             }
         }

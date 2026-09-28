@@ -9,7 +9,7 @@ import net.runelite.client.config.ConfigSection;
 public interface OsrsTranslateConfig extends Config {
     enum TranslationLanguage {
         PORTUGUESE_BRAZIL("Português", "pt-BR"),
-        SPANISH("Espanhol", "ESP");
+        SPANISH("Español", "ESP");
 
         private final String displayName;
         private final String repositoryFolder;
@@ -21,6 +21,22 @@ public interface OsrsTranslateConfig extends Config {
 
         String getRepositoryFolder() {
             return repositoryFolder;
+        }
+
+        @Override
+        public String toString() {
+            return displayName;
+        }
+    }
+
+    enum TranslationSource {
+        REMOTE("Remota"),
+        LOCAL("Local");
+
+        private final String displayName;
+
+        TranslationSource(String displayName) {
+            this.displayName = displayName;
         }
 
         @Override
@@ -46,6 +62,57 @@ public interface OsrsTranslateConfig extends Config {
     default TranslationLanguage translationLanguage() {
         return TranslationLanguage.PORTUGUESE_BRAZIL;
     }
+
+    @ConfigItem(
+        keyName = "translationSource",
+        name = "Fonte das traduções",
+        description = "Escolhe entre os dicionários remotos e os arquivos locais do projeto",
+        section = translationCorrection,
+        position = 1
+    )
+    default TranslationSource translationSource() {
+        return TranslationSource.REMOTE;
+    }
+
+    @ConfigItem(
+        keyName = "translationHotReload",
+        name = "Hot reload das traduções",
+        description = "Recarrega automaticamente os JSONs locais quando forem alterados",
+        section = translationCorrection,
+        position = 3
+    )
+    default boolean translationHotReload() {
+        return true;
+    }
+
+    @ConfigItem(
+        keyName = "developerMode",
+        name = "Modo desenvolvedor",
+        description = "Permite usar traduções locais e hot reload para testar correções",
+        section = translationCorrection,
+        position = 0
+    )
+    default boolean developerMode() {
+        return false;
+    }
+
+    @ConfigItem(
+        keyName = "localTranslationPath",
+        name = "Caminho dos JSONs",
+        description = "Pasta que contém os arquivos JSON quando a fonte Local estiver selecionada",
+        section = translationCorrection,
+        position = 2
+    )
+    default String localTranslationPath() {
+        return "";
+    }
+
+    @ConfigSection(
+        name = "Correção tradução",
+        description = "Opções para testar e corrigir traduções locais",
+        position = 3
+    )
+    String translationCorrection = "Correção tradução";
 
     @ConfigSection(
         name = "Traduções Estáticas",
@@ -88,11 +155,22 @@ public interface OsrsTranslateConfig extends Config {
     }
 
     @ConfigItem(
+        keyName = "enableAchievementDiary",
+        name = "Traduzir Achievement Diary",
+        description = "Traduz textos dos diários de conquistas",
+        section = staticTranslations,
+        position = 3
+    )
+    default boolean enableAchievementDiary() {
+        return true;
+    }
+
+    @ConfigItem(
         keyName = "enableItems",
         name = "Traduzir livros",
         description = "Traduz textos de livros e notas no jogo",
         section = staticTranslations,
-        position = 3
+        position = 4
     )
     default boolean enableItems() {
         return true;
@@ -103,7 +181,7 @@ public interface OsrsTranslateConfig extends Config {
         name = "Traduzir opções de menu",
         description = "Traduz opções de menu dos npcs, objetos e clique direito",
         section = staticTranslations,
-        position = 4
+        position = 5
     )
     default boolean enableMenuEntries() {
         return true;
@@ -114,7 +192,7 @@ public interface OsrsTranslateConfig extends Config {
         name = "Traduzir falas acima da cabeça",
         description = "Traduz textos que aparecem acima da cabeça dos NPCs",
         section = staticTranslations,
-        position = 5
+        position = 6
     )
     default boolean enableOverhead() {
         return true;
@@ -125,7 +203,7 @@ public interface OsrsTranslateConfig extends Config {
         name = "Traduzir mensagens do jogo",
         description = "Traduz mensagens do jogo como examinar, ações que aparecem no chat do jogo",
         section = staticTranslations,
-        position = 6
+        position = 7
     )
     default boolean enableGameMessages() {
         return true;
@@ -136,7 +214,7 @@ public interface OsrsTranslateConfig extends Config {
         name = "Traduzir boas-vindas",
         description = "Traduz a tela e mensagens de boas-vindas/login",
         section = staticTranslations,
-        position = 7
+        position = 8
     )
     default boolean enableWelcome() {
         return true;
@@ -147,9 +225,20 @@ public interface OsrsTranslateConfig extends Config {
         name = "Traduzir Settings",
         description = "Traduz textos da interface de configuracoes",
         section = staticTranslations,
-        position = 8
+        position = 9
     )
     default boolean enableSettings() {
+        return true;
+    }
+
+    @ConfigItem(
+        keyName = "enableClueScrolls",
+        name = "Traduzir clue scrolls",
+        description = "Traduz o texto dos pergaminhos de pistas após o RuneLite identificar o original",
+        section = staticTranslations,
+        position = 10
+    )
+    default boolean enableClueScrolls() {
         return true;
     }
 

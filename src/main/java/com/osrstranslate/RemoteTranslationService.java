@@ -34,8 +34,8 @@ import java.util.stream.Stream;
 
 final class RemoteTranslationService {
     static final String DEFAULT_MANIFEST_URL =
-        "https://raw.githubusercontent.com/walterrezende12-tech/"
-            + "osrs-translate-translations/main/manifest.json";
+        "https://api.github.com/repos/walterrezende12-tech/"
+            + "osrs-translate-translations/contents/manifest.json?ref=main";
 
     static final List<String> REQUIRED_FILES = Collections.unmodifiableList(Arrays.asList(
         "translations.json",

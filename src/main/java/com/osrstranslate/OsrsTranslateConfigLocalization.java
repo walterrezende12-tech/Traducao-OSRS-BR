@@ -247,6 +247,18 @@ final class OsrsTranslateConfigLocalization {
         add(texts, "Idioma", "Idioma", "Idioma");
         add(texts, "Seleciona o idioma das traduções", "Seleciona o idioma das traduções", "Selecciona el idioma de las traducciones");
         add(texts, "Seleciona o idioma baixado do repositório oficial", "Seleciona o idioma baixado do repositório oficial", "Selecciona el idioma descargado del repositorio oficial");
+        add(texts, "Correção tradução", "Correção tradução", "Corrección de traducción");
+        add(texts, "Opções para testar e corrigir traduções locais", "Opções para testar e corrigir traduções locais", "Opciones para probar y corregir traducciones locales");
+        add(texts, "Modo desenvolvedor", "Modo desenvolvedor", "Modo desarrollador");
+        add(texts, "Permite usar traduções locais e hot reload para testar correções", "Permite usar traduções locais e hot reload para testar correções", "Permite usar traducciones locales y hot reload para probar correcciones");
+        add(texts, "Fonte das traduções", "Fonte das traduções", "Fuente de las traducciones");
+        add(texts, "Escolhe entre os dicionários remotos e os arquivos locais do projeto", "Escolhe entre os dicionários remotos e os arquivos locais do projeto", "Elige entre los diccionarios remotos y los archivos locales del proyecto");
+        add(texts, "Remota", "Remota", "Remota");
+        add(texts, "Local", "Local", "Local");
+        add(texts, "Caminho dos JSONs", "Caminho dos JSONs", "Ruta de los JSON");
+        add(texts, "Pasta que contém os arquivos JSON quando a fonte Local estiver selecionada", "Pasta que contém os arquivos JSON quando a fonte Local estiver selecionada", "Carpeta que contiene los archivos JSON cuando se selecciona la fuente Local");
+        add(texts, "Hot reload das traduções", "Hot reload das traduções", "Hot reload de las traducciones");
+        add(texts, "Recarrega automaticamente os JSONs locais quando forem alterados", "Recarrega automaticamente os JSONs locais quando forem alterados", "Recarga automáticamente los JSON locales cuando se modifiquen");
         add(texts, "Traduções Estáticas", "Traduções Estáticas", "Traducciones estáticas");
         add(texts, "Configurações de traduções para interfaces do jogo", "Configurações de traduções para interfaces do jogo", "Configuración de traducciones para las interfaces del juego");
         add(texts, "Traduzir diálogos", "Traduzir diálogos", "Traducir diálogos");
@@ -255,6 +267,8 @@ final class OsrsTranslateConfigLocalization {
         add(texts, "Traduz textos do Skill Guide", "Traduz textos do Skill Guide", "Traduce textos de la guía de habilidades");
         add(texts, "Traduzir Quest Journal", "Traduzir Quest Journal", "Traducir diario de misiones");
         add(texts, "Traduz textos do Quest Journal", "Traduz textos do Quest Journal", "Traduce textos del diario de misiones");
+        add(texts, "Traduzir Achievement Diary", "Traduzir Achievement Diary", "Traducir diario de logros");
+        add(texts, "Traduz textos dos diários de conquistas", "Traduz textos dos diários de conquistas", "Traduce textos de los diarios de logros");
         add(texts, "Traduzir livros", "Traduzir livros", "Traducir libros");
         add(texts, "Traduz textos de livros e notas no jogo", "Traduz textos de livros e notas no jogo", "Traduce textos de libros y notas del juego");
         add(texts, "Traduzir opções de menu", "Traduzir opções de menu", "Traducir opciones de menú");
@@ -267,6 +281,8 @@ final class OsrsTranslateConfigLocalization {
         add(texts, "Traduz a tela e mensagens de boas-vindas/login", "Traduz a tela e mensagens de boas-vindas/login", "Traduce la pantalla y los mensajes de bienvenida/inicio de sesión");
         add(texts, "Traduzir Settings", "Traduzir Settings", "Traducir configuración");
         add(texts, "Traduz textos da interface de configuracoes", "Traduz textos da interface de configuracoes", "Traduce los textos de la interfaz de configuración");
+        add(texts, "Traduzir clue scrolls", "Traduzir clue scrolls", "Traducir clue scrolls");
+        add(texts, "Traduz o texto dos pergaminhos de pistas após o RuneLite identificar o original", "Traduz o texto dos pergaminhos de pistas após o RuneLite identificar o original", "Traduce el texto de los pergaminos de pistas después de que RuneLite identifique el original");
         add(texts, "Correções Visuais", "Correções Visuais", "Correcciones visuales");
         add(texts, "Ajustes de layout e apresentação", "Ajustes de layout e apresentação", "Ajustes de diseño y presentación");
         add(texts, "Espaçamento entre linhas", "Espaçamento entre linhas", "Espaciado entre líneas");
