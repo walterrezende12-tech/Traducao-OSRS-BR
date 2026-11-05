@@ -945,7 +945,13 @@ public class OsrsTranslatePlugin extends Plugin {
             return null;
         }
 
-        String translation = TranslationLookupHelper.findTranslation(domain.translations, domain.regexPatterns, lookup);
+        String richLookup = QuestHelperCompat.stripNumberingPrefix(TranslationLookupHelper.richLookupText(originalText));
+        String translation = TranslationLookupHelper.findTranslation(
+            domain.translations,
+            domain.regexPatterns,
+            lookup,
+            richLookup
+        );
 
         if (translation != null && interfaceId == CHAT_OVERLAY) {
             translation = normalizeChatOverlayTags(translation);
@@ -1188,13 +1194,21 @@ public class OsrsTranslatePlugin extends Plugin {
         String translation = TranslationLookupHelper.findTranslation(
             state.translationsGameMessage,
             state.regexGameMessageTranslations,
-            clean
+            clean,
+            TranslationLookupHelper.richLookupText(event.getMessage())
         );
         if (translation == null) {
             return;
         }
 
-        if (shouldDeferRichChatOverlayTranslation(translation)) {
+        // Decided from the dictionary's own formatting: a value filled in from the message may
+        // carry its "</col>", which must not send a plain chat line to the overlay.
+        String plainTranslation = TranslationLookupHelper.findTranslation(
+            state.translationsGameMessage,
+            state.regexGameMessageTranslations,
+            clean
+        );
+        if (shouldDeferRichChatOverlayTranslation(plainTranslation)) {
             translateInterface(CHAT_OVERLAY);
             return;
         }

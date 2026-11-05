@@ -23,6 +23,7 @@ final class TranslationLookupHelper
     private static final Pattern BR_TAG = Pattern.compile("(?i)<br\\s*/?>");
     private static final Pattern HTML_TAG = Pattern.compile("<[^>]+>");
     private static final Pattern PLACEHOLDER = Pattern.compile("\\[[^\\]]+\\]");
+    private static final Pattern START_TAGS = Pattern.compile("^(<str>|<col=[^>]+>)+");
 
     private TranslationLookupHelper()
     {
@@ -176,37 +177,83 @@ final class TranslationLookupHelper
         return findRegexTranslation(patterns, lookup);
     }
 
+    /**
+     * Like {@link #findTranslation(Map, List, String)}, but when a [placeholder] key matches,
+     * its placeholders are filled from {@code richLookup} (the same text with its inline tags
+     * kept, see {@link #richLookupText(String)}) if the key matches that too. A value the game
+     * colours, such as the track name in "You have unlocked a new music track:
+     * &lt;col=e00a19&gt;Forever", then keeps its colour. When the key does not match the tagged
+     * text (a tag inside the key's own words), the plain lookup is used, as before.
+     */
+    static String findTranslation(
+        Map<String, String> source,
+        List<PatternEntry> patterns,
+        String lookup,
+        String richLookup)
+    {
+        String translation = findTranslation(source, lookup);
+        if (translation != null || patterns == null || patterns.isEmpty())
+        {
+            return translation;
+        }
+
+        for (PatternEntry entry : patterns)
+        {
+            String result = applyPattern(entry, lookup);
+            if (result == null)
+            {
+                continue;
+            }
+            if (richLookup != null && !richLookup.equals(lookup))
+            {
+                String rich = applyPattern(entry, richLookup);
+                if (rich != null)
+                {
+                    return rich;
+                }
+            }
+            return result;
+        }
+        return null;
+    }
+
     static String findRegexTranslation(List<PatternEntry> patterns, String lookup)
     {
         for (PatternEntry entry : patterns)
         {
-            Matcher matcher = entry.pattern.matcher(lookup);
-            if (!matcher.matches())
-            {
-                continue;
-            }
-
-            String result = entry.translation;
-            boolean replacedPlaceholder = false;
-            for (int i = 1; i <= matcher.groupCount(); i++)
-            {
-                Matcher placeholderMatcher = PLACEHOLDER.matcher(result);
-                if (!placeholderMatcher.find())
-                {
-                    break;
-                }
-
-                result = result.substring(0, placeholderMatcher.start())
-                    + matcher.group(i)
-                    + result.substring(placeholderMatcher.end());
-                replacedPlaceholder = true;
-            }
-            if (replacedPlaceholder && !lookup.equals(result))
+            String result = applyPattern(entry, lookup);
+            if (result != null)
             {
                 return result;
             }
         }
         return null;
+    }
+
+    private static String applyPattern(PatternEntry entry, String lookup)
+    {
+        Matcher matcher = entry.pattern.matcher(lookup);
+        if (!matcher.matches())
+        {
+            return null;
+        }
+
+        String result = entry.translation;
+        boolean replacedPlaceholder = false;
+        for (int i = 1; i <= matcher.groupCount(); i++)
+        {
+            Matcher placeholderMatcher = PLACEHOLDER.matcher(result);
+            if (!placeholderMatcher.find())
+            {
+                break;
+            }
+
+            result = result.substring(0, placeholderMatcher.start())
+                + matcher.group(i)
+                + result.substring(placeholderMatcher.end());
+            replacedPlaceholder = true;
+        }
+        return replacedPlaceholder && !lookup.equals(result) ? result : null;
     }
 
     static String cleanText(String text)
@@ -219,6 +266,23 @@ final class TranslationLookupHelper
         String clean = BR_TAG.matcher(text).replaceAll(" ");
         clean = HTML_TAG.matcher(clean).replaceAll(" ");
         return clean.replaceAll("\\s+", " ").trim();
+    }
+
+    /**
+     * The lookup text with its inline tags kept: &lt;br&gt; becomes a space, the leading
+     * &lt;col&gt;/&lt;str&gt; tags are dropped (the caller puts them back in front of the
+     * translation), whitespace is collapsed and the text is normalised as the lookup is.
+     */
+    static String richLookupText(String text)
+    {
+        if (text == null)
+        {
+            return "";
+        }
+
+        String rich = BR_TAG.matcher(text).replaceAll(" ").replaceAll("\\s+", " ").trim();
+        rich = START_TAGS.matcher(rich).replaceFirst("").trim();
+        return normalizeLookupText(rich);
     }
 
     static String normalizeLookupText(String text)
