@@ -285,6 +285,13 @@ final class TranslationLookupHelper
         return normalizeLookupText(rich);
     }
 
+    /** The leading &lt;str&gt;/&lt;col&gt; tags of {@code text}, or an empty string. */
+    static String startTags(String text)
+    {
+        Matcher matcher = START_TAGS.matcher(text);
+        return matcher.find() ? matcher.group() : "";
+    }
+
     static String normalizeLookupText(String text)
     {
         return text

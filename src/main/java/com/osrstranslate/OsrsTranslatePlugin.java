@@ -7,6 +7,7 @@ import okhttp3.OkHttpClient;
 import net.runelite.api.Actor;
 import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
+import net.runelite.api.FontTypeFace;
 import net.runelite.api.GameState;
 import net.runelite.api.MessageNode;
 import net.runelite.api.Menu;
@@ -47,6 +48,7 @@ import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.function.IntFunction;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -109,6 +111,14 @@ public class OsrsTranslatePlugin extends Plugin {
         ACHIEVEMENT_DIARY_SCROLL,
     };
 
+    // One line per component: a sentence may be wrapped over several of them.
+    private static final int[] JOURNAL_INTERFACES = {
+        QUEST_JOURNAL,
+        QUEST_SCROLL,
+        ACHIEVEMENT_DIARY_SCROLL,
+        BOOKS_NOTES,
+    };
+
     private static final int[] ITEM_INTERFACES = {
         ITEM_PREVIEW,
         BOOKS_NOTES,
@@ -158,6 +168,8 @@ public class OsrsTranslatePlugin extends Plugin {
     private long loginInspectionDeadline;
     private final Set<Integer> inspectedLoginGroups = new HashSet<>();
     private final Set<Integer> loginInterfaceGroups = new HashSet<>();
+    // Journal lines already given their share of a joined sentence in this pass.
+    private final Set<Integer> joinedJournalLines = new HashSet<>();
 
     @Override
     protected void startUp() {
@@ -791,6 +803,7 @@ public class OsrsTranslatePlugin extends Plugin {
             log.info("[SkillGuide] traducao iniciada");
         }
 
+        joinedJournalLines.clear();
         for (int i = 0; i < 100; i++) {
             Widget widget = client.getWidget(interfaceId, i);
             if (widget != null) {
@@ -805,6 +818,10 @@ public class OsrsTranslatePlugin extends Plugin {
         }
 
         String text = widget.getText();
+        if (text != null && !text.isEmpty() && contains(JOURNAL_INTERFACES, interfaceId)
+            && translateJournalLine(widget, interfaceId)) {
+            return;
+        }
         if (text != null && !text.isEmpty()) {
             if (interfaceId == ITEM_PREVIEW) {
                 log.info("[ItemPreview] processando texto: {}", text);
@@ -887,6 +904,79 @@ public class OsrsTranslatePlugin extends Plugin {
                 translateWidget(child, interfaceId);
             }
         }
+    }
+
+    /**
+     * Journal lines are one component each, so a sentence wrapped over several lines matches no
+     * key line by line. When this line has no translation of its own, it is joined with its
+     * neighbouring components (see {@link JournalLineJoiner}); if a join is a key, its
+     * translation is wrapped to the component width and shared out over those components.
+     * Lines that translate on their own are left to the usual lookup, unless they belong to a
+     * joined sentence. Returns true when this line was handled here.
+     */
+    private boolean translateJournalLine(Widget widget, int interfaceId) {
+        int id = widget.getId();
+        // Only static components: a dynamic child shares its parent's id and has no neighbours.
+        if (client.getWidget(id) != widget) {
+            return false;
+        }
+        if (joinedJournalLines.contains(id)) {
+            return true;
+        }
+        FontTypeFace font = widget.getFont();
+        if (font == null) {
+            return false;
+        }
+
+        TranslationDomain domain = domainForInterface(interfaceId, translationState);
+        int group = id >>> 16;
+        int child = id & 0xFFFF;
+        IntFunction<String> textAt = offset -> {
+            int sibling = child + offset;
+            if (sibling < 0 || sibling > 0xFFFF) {
+                return null;
+            }
+            Widget line = client.getWidget(group, sibling);
+            return line == null ? null : line.getText();
+        };
+
+        JournalLineJoiner.Join join = JournalLineJoiner.find(textAt, new JournalLineJoiner.Dictionary() {
+            @Override
+            public boolean translatesAlone(String line) {
+                String clean = normalizeLookupText(cleanText(line));
+                return clean.isEmpty()
+                    || domain.values.contains(clean)
+                    || TranslationLookupHelper.findTranslation(domain.translations, domain.regexPatterns, clean) != null;
+            }
+
+            @Override
+            public String translateJoined(String joined) {
+                String lookup = normalizeLookupText(cleanText(joined));
+                if (domain.values.contains(lookup)) {
+                    return null;
+                }
+                return TranslationLookupHelper.findTranslation(
+                    domain.translations,
+                    domain.regexPatterns,
+                    lookup,
+                    TranslationLookupHelper.richLookupText(joined)
+                );
+            }
+        });
+        if (join == null) {
+            return false;
+        }
+
+        List<String> display = JournalLineJoiner.shareOut(join, widget.getWidth(), font::getTextWidth);
+        for (int i = 0; i < display.size(); i++) {
+            Widget line = client.getWidget(group, child + join.start + i);
+            if (line != null) {
+                line.setText(display.get(i));
+                joinedJournalLines.add(line.getId());
+            }
+        }
+        log.debug("[JournalJoin] id={} lines={}", id, display.size());
+        return true;
     }
 
     private void applyLineHeightFix(Widget widget, int interfaceId, int referenceLineHeight) {
