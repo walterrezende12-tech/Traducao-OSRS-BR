@@ -312,6 +312,29 @@ final class TranslationLookupHelper
         return matcher.find() ? matcher.group() : "";
     }
 
+    /**
+     * Rich translations use &lt;br&gt; and &lt;/col&gt;. The chat overlay (263) wants new lines,
+     * and black where a colour ends, since it is drawn on a light background.
+     */
+    static String normalizeChatOverlayTags(String text)
+    {
+        if (text == null || text.isEmpty())
+        {
+            return text;
+        }
+        return chatboxLineBreaks(text).replace("</col>", "<col=000000>");
+    }
+
+    /** For chatbox lines: &lt;br&gt; becomes a new line and colour tags are left alone. */
+    static String chatboxLineBreaks(String text)
+    {
+        if (text == null || text.isEmpty())
+        {
+            return text;
+        }
+        return BR_TAG.matcher(text).replaceAll("\n");
+    }
+
     static String normalizeLookupText(String text)
     {
         return text

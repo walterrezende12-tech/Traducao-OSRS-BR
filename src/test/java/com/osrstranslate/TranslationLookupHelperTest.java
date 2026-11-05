@@ -83,4 +83,11 @@ public class TranslationLookupHelperTest
             gameMessage(MUSIC, "You have unlocked a new music track: <col=e00a19>Forever")
         );
     }
+
+    @Test
+    public void chatboxKeepsColourEndsWhileTheOverlayTurnsThemBlack()
+    {
+        assertEquals("A\nB</col>C", TranslationLookupHelper.chatboxLineBreaks("A<br>B</col>C"));
+        assertEquals("A\nB<col=000000>C", TranslationLookupHelper.normalizeChatOverlayTags("A<br>B</col>C"));
+    }
 }

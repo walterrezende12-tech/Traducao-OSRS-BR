@@ -1051,13 +1051,7 @@ public class OsrsTranslatePlugin extends Plugin {
     }
 
     private String normalizeChatOverlayTags(String text) {
-        if (text == null || text.isEmpty()) {
-            return text;
-        }
-
-        return BR_TAG.matcher(text)
-            .replaceAll("\n")
-            .replace("</col>", "<col=000000>");
+        return TranslationLookupHelper.normalizeChatOverlayTags(text);
     }
 
     private TranslationDomain domainForInterface(int interfaceId, TranslationState state) {
@@ -1298,7 +1292,9 @@ public class OsrsTranslatePlugin extends Plugin {
             return;
         }
 
-        translation = normalizeChatOverlayTags(translation);
+        // Line breaks only. "</col>" is left as it is: in the chatbox it returns to the line's
+        // own colour, while the overlay's black would be unreadable on a transparent chatbox.
+        translation = TranslationLookupHelper.chatboxLineBreaks(translation);
 
         log.debug("[ChatTranslate] type={} translatedLen={}", event.getType(), translation.length());
 
