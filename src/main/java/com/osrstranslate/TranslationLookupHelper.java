@@ -15,6 +15,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -215,6 +216,25 @@ final class TranslationLookupHelper
             return result;
         }
         return null;
+    }
+
+    /**
+     * The translation of a chat message, or null. The lookup is normalised as widget text is: a
+     * highlighted word ("Nothing interesting <col=ff0000>happens</col>.") leaves a space before
+     * the full stop once its tags become spaces, which the dictionary's key does not have.
+     */
+    static String findGameMessageTranslation(
+        Map<String, String> source,
+        Set<String> values,
+        List<PatternEntry> patterns,
+        String message)
+    {
+        String clean = normalizeLookupText(cleanText(message));
+        if (clean.isEmpty() || values.contains(clean))
+        {
+            return null;
+        }
+        return findTranslation(source, patterns, clean, richLookupText(message));
     }
 
     static String findRegexTranslation(List<PatternEntry> patterns, String lookup)

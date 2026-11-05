@@ -1275,17 +1275,12 @@ public class OsrsTranslatePlugin extends Plugin {
             return;
         }
 
-        String clean = cleanText(event.getMessage());
         TranslationState state = translationState;
-        if (clean.isEmpty() || state.translationGameMessageValues.contains(clean)) {
-            return;
-        }
-
-        String translation = TranslationLookupHelper.findTranslation(
+        String translation = TranslationLookupHelper.findGameMessageTranslation(
             state.translationsGameMessage,
+            state.translationGameMessageValues,
             state.regexGameMessageTranslations,
-            clean,
-            TranslationLookupHelper.richLookupText(event.getMessage())
+            event.getMessage()
         );
         if (translation == null) {
             return;
@@ -1296,7 +1291,7 @@ public class OsrsTranslatePlugin extends Plugin {
         String plainTranslation = TranslationLookupHelper.findTranslation(
             state.translationsGameMessage,
             state.regexGameMessageTranslations,
-            clean
+            TranslationLookupHelper.normalizeLookupText(TranslationLookupHelper.cleanText(event.getMessage()))
         );
         if (shouldDeferRichChatOverlayTranslation(plainTranslation)) {
             translateInterface(CHAT_OVERLAY);
