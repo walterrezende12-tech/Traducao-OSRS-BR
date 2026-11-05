@@ -85,6 +85,16 @@ public class TranslationLookupHelperTest
     }
 
     @Test
+    public void capturedValueThatLooksLikeAPlaceholderIsNotFilledAgain()
+    {
+        Map<String, String> source = Collections.singletonMap("[a] and [b]", "[a] e [b]");
+        assertEquals(
+            "x [y] e z",
+            TranslationLookupHelper.findRegexTranslation(TranslationLookupHelper.compileRegexTranslations(source), "x [y] and z")
+        );
+    }
+
+    @Test
     public void chatboxKeepsColourEndsWhileTheOverlayTurnsThemBlack()
     {
         assertEquals("A\nB</col>C", TranslationLookupHelper.chatboxLineBreaks("A<br>B</col>C"));

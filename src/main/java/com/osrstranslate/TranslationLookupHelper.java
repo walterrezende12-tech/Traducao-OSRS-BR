@@ -260,17 +260,21 @@ final class TranslationLookupHelper
 
         String result = entry.translation;
         boolean replacedPlaceholder = false;
+        // Search after each inserted value, so a captured "[x]" is not taken for a placeholder.
+        int from = 0;
         for (int i = 1; i <= matcher.groupCount(); i++)
         {
             Matcher placeholderMatcher = PLACEHOLDER.matcher(result);
-            if (!placeholderMatcher.find())
+            if (!placeholderMatcher.find(from))
             {
                 break;
             }
 
+            String value = matcher.group(i);
             result = result.substring(0, placeholderMatcher.start())
-                + matcher.group(i)
+                + value
                 + result.substring(placeholderMatcher.end());
+            from = placeholderMatcher.start() + value.length();
             replacedPlaceholder = true;
         }
         return replacedPlaceholder && !lookup.equals(result) ? result : null;
