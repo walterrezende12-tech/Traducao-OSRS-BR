@@ -120,6 +120,14 @@ final class TranslationLookupHelper
                 continue;
             }
 
+            if (!staticTextHasLetter(key))
+            {
+                // Brackets plus punctuation only ("[Vampyre name].", "[player]?") match
+                // every sentence ending in that punctuation and rewrite it: the full
+                // stop dropped, or an inverted question mark put in front.
+                continue;
+            }
+
             String[] parts = PLACEHOLDER.split(key, -1);
             StringBuilder pattern = new StringBuilder();
             for (int i = 0; i < parts.length; i++)
@@ -148,6 +156,19 @@ final class TranslationLookupHelper
     private static String templateSignature(String text)
     {
         return PLACEHOLDER.matcher(text).replaceAll(Matcher.quoteReplacement("\u0000"));
+    }
+
+    private static boolean staticTextHasLetter(String text)
+    {
+        String staticText = PLACEHOLDER.matcher(text).replaceAll("");
+        for (int i = 0; i < staticText.length(); i++)
+        {
+            if (Character.isLetter(staticText.charAt(i)))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static int staticTextLength(String text)

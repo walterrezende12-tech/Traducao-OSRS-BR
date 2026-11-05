@@ -95,6 +95,19 @@ public class TranslationLookupHelperTest
     }
 
     @Test
+    public void placeholderPlusPunctuationIsNotACatchAll()
+    {
+        Map<String, String> source = new LinkedHashMap<>();
+        source.put("[Vampyre name].", "[Vampyre name]");
+        source.put("[player]?", "¿[player]?");
+        source.put("Hi [player].", "Oi [player].");
+        List<TranslationLookupHelper.PatternEntry> patterns = TranslationLookupHelper.compileRegexTranslations(source);
+        assertNull(TranslationLookupHelper.findRegexTranslation(patterns, "Welcome to my shop."));
+        assertNull(TranslationLookupHelper.findRegexTranslation(patterns, "What is this?"));
+        assertEquals("Oi Bob.", TranslationLookupHelper.findRegexTranslation(patterns, "Hi Bob."));
+    }
+
+    @Test
     public void chatboxKeepsColourEndsWhileTheOverlayTurnsThemBlack()
     {
         assertEquals("A\nB</col>C", TranslationLookupHelper.chatboxLineBreaks("A<br>B</col>C"));
