@@ -107,6 +107,18 @@ public interface OsrsTranslateConfig extends Config {
         return "";
     }
 
+    @ConfigItem(
+        keyName = "recordMissingTranslations",
+        name = "Registrar textos sem tradução",
+        description = "Salva em ~/.runelite/osrs-translate/sem-traducao/ os textos que não estão no dicionário "
+            + "(diálogos, falas, mensagens do jogo). Nada é enviado pela internet.",
+        section = translationCorrection,
+        position = 4
+    )
+    default boolean recordMissingTranslations() {
+        return false;
+    }
+
     @ConfigSection(
         name = "Correção tradução",
         description = "Opções para testar e corrigir traduções locais",

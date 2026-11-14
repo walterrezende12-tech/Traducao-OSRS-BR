@@ -154,6 +154,7 @@ public class OsrsTranslatePlugin extends Plugin {
     private ScheduledExecutorService localTranslationHotReloadScheduler;
     private volatile String localTranslationFingerprint = "";
     private RemoteTranslationService remoteTranslationService;
+    private volatile MissingTranslationRecorder missingTranslationRecorder;
     private EventBus.Subscriber menuOpenedTranslationSubscriber;
     private long loginInspectionDeadline;
     private final Set<Integer> inspectedLoginGroups = new HashSet<>();
@@ -174,6 +175,7 @@ public class OsrsTranslatePlugin extends Plugin {
             translationCacheRoot
         );
         reloadTranslations();
+        updateMissingTranslationRecorder();
         menuOpenedTranslationSubscriber = eventBus.register(
             MenuOpened.class,
             event -> {
@@ -201,6 +203,7 @@ public class OsrsTranslatePlugin extends Plugin {
             remoteUpdateScheduler = null;
         }
         stopLocalTranslationHotReload();
+        stopMissingTranslationRecorder();
         eventBus.unregister(menuOpenedTranslationSubscriber);
         menuOpenedTranslationSubscriber = null;
         remoteTranslationService = null;
@@ -280,6 +283,10 @@ public class OsrsTranslatePlugin extends Plugin {
         OsrsTranslateConfigLocalization.localize(
             changedLanguage == null ? config.translationLanguage() : changedLanguage
         );
+        if ("recordMissingTranslations".equals(event.getKey())
+            || "translationLanguage".equals(event.getKey())) {
+            updateMissingTranslationRecorder();
+        }
         if ((!"translationLanguage".equals(event.getKey())
             && !"translationSource".equals(event.getKey())
             && !"translationHotReload".equals(event.getKey())
@@ -320,6 +327,46 @@ public class OsrsTranslatePlugin extends Plugin {
 
     private String selectedLanguageFolder() {
         return config.translationLanguage().getRepositoryFolder();
+    }
+
+    private void updateMissingTranslationRecorder() {
+        stopMissingTranslationRecorder();
+        if (!config.recordMissingTranslations()) {
+            return;
+        }
+        File directory = new File(
+            RuneLite.RUNELITE_DIR,
+            "osrs-translate" + File.separator + "sem-traducao"
+        );
+        missingTranslationRecorder = new MissingTranslationRecorder(directory, selectedLanguageFolder(), gson);
+        log.info("Registrando textos sem traducao em {}", missingTranslationRecorder.getFile());
+    }
+
+    private void stopMissingTranslationRecorder() {
+        MissingTranslationRecorder recorder = missingTranslationRecorder;
+        missingTranslationRecorder = null;
+        if (recorder != null) {
+            recorder.shutDown();
+        }
+    }
+
+    private void recordMissingTranslation(String fileName, String source, String text) {
+        MissingTranslationRecorder recorder = missingTranslationRecorder;
+        if (recorder != null) {
+            recorder.record(fileName, source, text);
+        }
+    }
+
+    /** Nome do dicionário ao qual pertence um mapa do estado atual (para o registro). */
+    private static String dictionaryFileName(Map<String, String> map, TranslationState state) {
+        if (map == state.translationsSkills) return "translations_skills.json";
+        if (map == state.translationsQuests) return "translations_quests.json";
+        if (map == state.translationsItems) return "translations_items.json";
+        if (map == state.translationsMenu) return "translations_menu.json";
+        if (map == state.translationsGameMessage) return "translations_game_message.json";
+        if (map == state.translationsWelcome) return "translations_welcome.json";
+        if (map == state.translationsSettings) return "translations_settings.json";
+        return "translations.json";
     }
 
     private boolean isLocalTranslationSource() {
@@ -947,6 +994,12 @@ public class OsrsTranslatePlugin extends Plugin {
 
         String translation = TranslationLookupHelper.findTranslation(domain.translations, domain.regexPatterns, lookup);
 
+        // O chat (CHAT_OVERLAY) também mostra mensagens de outros jogadores: elas não são registradas aqui.
+        // As mensagens do jogo são registradas em onChatMessage, filtradas por tipo.
+        if (translation == null && interfaceId != CHAT_OVERLAY) {
+            recordMissingTranslation(dictionaryFileName(domain.translations, state), "interfaz " + interfaceId, lookup);
+        }
+
         if (translation != null && interfaceId == CHAT_OVERLAY) {
             translation = normalizeChatOverlayTags(translation);
         }
@@ -1051,6 +1104,8 @@ public class OsrsTranslatePlugin extends Plugin {
         if (translation != null) {
             actor.setOverheadText(translation);
             log.debug("[OverheadTranslate] '{}' -> '{}'", clean, translation);
+        } else if (!translationState.translationsOverhead.containsValue(clean)) {
+            recordMissingTranslation("translations_overhead.json", "overhead", clean);
         }
     }
 
@@ -1179,7 +1234,11 @@ public class OsrsTranslatePlugin extends Plugin {
             return;
         }
 
-        String clean = cleanText(event.getMessage());
+        // Algumas mensagens chegam com códigos de cor do jogo ("@mes_hl_cya@Texto</col>").
+        // Procuramos sem o código e o recolocamos na tradução para manter a cor.
+        String rawMessage = event.getMessage();
+        String colorPrefix = TranslationLookupHelper.leadingChatColorCodes(rawMessage);
+        String clean = cleanText(TranslationLookupHelper.stripChatColorCodes(rawMessage));
         TranslationState state = translationState;
         if (clean.isEmpty() || state.translationGameMessageValues.contains(clean)) {
             return;
@@ -1190,9 +1249,22 @@ public class OsrsTranslatePlugin extends Plugin {
             state.regexGameMessageTranslations,
             clean
         );
+        if (translation == null && !colorPrefix.isEmpty()) {
+            // Compatibilidade com entradas antigas que incluem o código de cor na chave
+            translation = TranslationLookupHelper.findTranslation(
+                state.translationsGameMessage,
+                state.regexGameMessageTranslations,
+                cleanText(rawMessage)
+            );
+            if (translation != null && translation.startsWith(colorPrefix)) {
+                translation = translation.substring(colorPrefix.length());
+            }
+        }
         if (translation == null) {
+            recordMissingTranslation("translations_game_message.json", "chat " + event.getType(), clean);
             return;
         }
+        translation = colorPrefix + translation;
 
         if (shouldDeferRichChatOverlayTranslation(translation)) {
             translateInterface(CHAT_OVERLAY);

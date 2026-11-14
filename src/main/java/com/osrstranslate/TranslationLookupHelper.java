@@ -209,6 +209,26 @@ final class TranslationLookupHelper
         return null;
     }
 
+    private static final Pattern CHAT_COLOR_CODE = Pattern.compile("@[a-z][a-z0-9_]*@");
+    private static final Pattern LEADING_CHAT_COLOR_CODES = Pattern.compile("^(?:@[a-z][a-z0-9_]*@)+");
+
+    /** Remove códigos de cor do chat do jogo, como "@mes_hl_cya@" ou "@red@". */
+    static String stripChatColorCodes(String text)
+    {
+        return text == null ? "" : CHAT_COLOR_CODE.matcher(text).replaceAll("");
+    }
+
+    /** Códigos de cor no início da mensagem (para recolocá-los na tradução). */
+    static String leadingChatColorCodes(String text)
+    {
+        if (text == null)
+        {
+            return "";
+        }
+        Matcher matcher = LEADING_CHAT_COLOR_CODES.matcher(text);
+        return matcher.find() ? matcher.group() : "";
+    }
+
     static String cleanText(String text)
     {
         if (text == null)
